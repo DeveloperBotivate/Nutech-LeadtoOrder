@@ -3,6 +3,8 @@
 import { useState, useContext } from "react"
 import { useNavigate } from "react-router-dom"
 import { AuthContext } from "../App"
+import { users } from "../data/dummyData"
+import nutechLogo from "../assests/Nutechlogo.png"
 
 function Login() {
   const [username, setUsername] = useState("")
@@ -42,6 +44,7 @@ function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-sky-50 to-sky-100 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-10">
+          <img src={nutechLogo} alt="Nutech" className="h-14 w-auto object-contain mx-auto mb-4" />
           <h1 className="text-4xl font-extrabold text-slate-800">
             Leads To Order System
           </h1>
@@ -95,7 +98,17 @@ function Login() {
             </form>
 
             <div className="mt-4 text-center text-sm text-gray-600">
-              <p>Authenticate with your credentials from the Login sheet</p>
+              <p className="font-medium text-gray-700 mb-1.5">Demo credentials</p>
+              <div className="space-y-1">
+                {users.map((u) => (
+                  <p key={u.username}>
+                    <span className="font-mono font-semibold text-gray-800">{u.username}</span>
+                    {" / "}
+                    <span className="font-mono font-semibold text-gray-800">{u.password}</span>
+                    <span className="text-gray-400"> ({u.userType})</span>
+                  </p>
+                ))}
+              </div>
             </div>
           </div>
         </div>
