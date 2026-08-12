@@ -3,12 +3,14 @@
 import { useState, useEffect, useContext } from "react"
 import { AuthContext } from "../App"
 import { mockApi } from "../services/mockApi"
+import { getLeadReceiverNames, getLeadSources, getNOBs, getCreditDays, getCreditLimits, getCompanies } from "../utils/storageManager"
 
 function Leads() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formData, setFormData] = useState({
     receiverName: "",
     source: "",
+    leadType: "", // New field (Incoming / Outgoing)
     companyName: "",
     phoneNumber: "",
     salespersonName: "",
@@ -16,12 +18,13 @@ function Leads() {
     email: "",
     contactPersons: [{ name: "", designation: "", number: "" }], // New array for contact persons
     state: "", // New field
+    city: "", // New field
     address: "", // New field
-    customerRegistrationForm: "", // New field
     creditAccess: "", // New field
     creditDays: "", // New field
     creditLimit: "", // New field
     nob: "", // New field for Nature of Business
+    division: "", // New field for Division, auto-fills from Company Master
     gst: "", // New field for GST
     notes: ""
   })
@@ -69,39 +72,51 @@ function Leads() {
       const data = await mockApi.fetchDropdowns()
 
       if (data) {
-        setReceiverNames(data.receivers || [])
-        setLeadSources(data.sources || [])
         setStateOptions(data.states || [])
-        setCreditDaysOptions(data.creditDays || [])
-        setCreditLimitOptions(data.creditLimits || [])
         setDesignationOptions(data.designations || [])
-        setNobOptions(data.nobs || [])
       }
     } catch (error) {
       console.error("Error fetching dropdown values:", error)
-      // Fallback to default values if needed
-      setReceiverNames(["John Smith", "Sarah Johnson", "Michael Brown"])
-      setLeadSources(["Indiamart", "Justdial", "Social Media", "Website", "Referral", "Other"])
-      // ... keep other fallbacks or rely on mockApi returning something valid
+    }
+
+    // Lead Receiver Name, Lead Source, NOB, Credit Days & Credit Limit are
+    // managed from the Master module, so pull their live values from there.
+    try {
+      setReceiverNames(getLeadReceiverNames().map(item => item.name))
+      setLeadSources(getLeadSources().map(item => item.name))
+      setNobOptions(getNOBs().map(item => item.name))
+      setCreditDaysOptions(getCreditDays().map(item => item.name))
+      setCreditLimitOptions(getCreditLimits().map(item => item.name))
+    } catch (error) {
+      console.error("Error loading master dropdown data:", error)
     }
   }
 
-  // Function to fetch company data from DROPDOWN sheet
+  // Function to fetch company data from the Company Master. Company records
+  // (including Division) are managed from the Master module, so pull their
+  // live values from there instead of the static mock list.
   const fetchCompanyData = async () => {
     try {
-      const companies = await mockApi.fetchCompanies()
+      const masterCompanies = getCompanies()
 
-      if (companies && companies.length > 0) {
+      if (masterCompanies && masterCompanies.length > 0) {
         const companyNames = []
         const detailsMap = {}
 
-        companies.forEach(company => {
+        masterCompanies.forEach(company => {
           companyNames.push(company.name)
           detailsMap[company.name] = {
-            salesPerson: company.salesPerson || "",
-            phoneNumber: company.phoneNumber || "",
+            salesPerson: company.contactPersons?.[0]?.name || "",
+            phoneNumber: company.phone || "",
             email: company.email || "",
-            location: company.location || ""
+            location: company.city || "",
+            division: company.division || "",
+            state: company.state || "",
+            city: company.city || "",
+            address: company.address || "",
+            nob: company.nob || "",
+            gst: company.gst || "",
+            contactPersons: company.contactPersons || []
           }
         })
 
@@ -125,13 +140,31 @@ function Leads() {
     // Auto-fill related fields if company is selected
     if (id === 'companyName' && value) {
       const companyDetails = companyDetailsMap[value] || {}
+
+      // Company Master's contact persons ({name, designation, number} each)
+      // pre-fill the Contact Person Details section — capped at 3 to match
+      // this form's own limit.
+      const companyContacts = (companyDetails.contactPersons || [])
+        .filter(p => p.name || p.designation || p.number)
+        .slice(0, 3)
+        .map(p => ({ name: p.name || "", designation: p.designation || "", number: p.number || "" }))
+
       setFormData(prevData => ({
         ...prevData,
         companyName: value,
         phoneNumber: companyDetails.phoneNumber || "",
         salespersonName: companyDetails.salesPerson || "",
         location: companyDetails.location || "",
-        email: companyDetails.email || ""
+        email: companyDetails.email || "",
+        division: companyDetails.division || "",
+        state: companyDetails.state || "",
+        city: companyDetails.city || "",
+        address: companyDetails.address || "",
+        nob: companyDetails.nob || "",
+        gst: companyDetails.gst || "",
+        contactPersons: companyContacts.length > 0
+          ? companyContacts
+          : [{ name: "", designation: "", number: "" }]
       }))
     }
   }
@@ -207,6 +240,7 @@ function Leads() {
         setFormData({
           receiverName: "",
           source: "",
+          leadType: "",
           companyName: "",
           phoneNumber: "",
           salespersonName: "",
@@ -214,12 +248,13 @@ function Leads() {
           email: "",
           contactPersons: [{ name: "", designation: "", number: "" }],
           state: "",
+          city: "",
           address: "",
-          customerRegistrationForm: "",
           creditAccess: "",
           creditDays: "",
           creditLimit: "",
           nob: "",
+          division: "",
           gst: "",
           notes: ""
         })
@@ -283,6 +318,23 @@ function Leads() {
                   {leadSources.map((source, index) => (
                     <option key={index} value={source}>{source}</option>
                   ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="leadType" className="block text-sm font-medium text-gray-700">
+                  Lead Type
+                </label>
+                <select
+                  id="leadType"
+                  value={formData.leadType}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                >
+                  <option value="">Select lead type</option>
+                  <option value="Incoming">Incoming</option>
+                  <option value="Outgoing">Outgoing</option>
                 </select>
               </div>
 
@@ -382,6 +434,19 @@ function Leads() {
                   ))}
                 </select>
               </div>
+
+              <div className="space-y-2">
+                <label htmlFor="city" className="block text-sm font-medium text-gray-700">
+                  City
+                </label>
+                <input
+                  id="city"
+                  value={formData.city}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter city"
+                />
+              </div>
             </div>
 
             {/* Address Field */}
@@ -442,17 +507,19 @@ function Leads() {
                     </div>
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-gray-700">Designation</label>
-                      <select
+                      <input
+                        list="designationOptions"
                         value={person.designation}
                         onChange={(e) => handleContactPersonChange(index, 'designation', e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Select or type designation"
                         required
-                      >
-                        <option value="">Select designation</option>
+                      />
+                      <datalist id="designationOptions">
                         {designationOptions.map((designation, idx) => (
-                          <option key={idx} value={designation}>{designation}</option>
+                          <option key={idx} value={designation} />
                         ))}
-                      </select>
+                      </datalist>
                     </div>
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-gray-700">Phone Number</label>
@@ -490,6 +557,19 @@ function Leads() {
               </div>
 
               <div className="space-y-2">
+                <label htmlFor="division" className="block text-sm font-medium text-gray-700">
+                  Division
+                </label>
+                <input
+                  id="division"
+                  value={formData.division}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Division will auto-fill"
+                />
+              </div>
+
+              <div className="space-y-2">
                 <label htmlFor="gst" className="block text-sm font-medium text-gray-700">
                   GST Number
                 </label>
@@ -501,23 +581,6 @@ function Leads() {
                   placeholder="GST number"
                 // required
                 />
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="customerRegistrationForm" className="block text-sm font-medium text-gray-700">
-                  Customer Registration Form
-                </label>
-                <select
-                  id="customerRegistrationForm"
-                  value={formData.customerRegistrationForm}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                >
-                  <option value="">Select option</option>
-                  <option value="Yes">Yes</option>
-                  <option value="No">No</option>
-                </select>
               </div>
 
               <div className="space-y-2">

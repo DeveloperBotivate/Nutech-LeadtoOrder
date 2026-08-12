@@ -4,6 +4,7 @@ import { useState, useContext, useEffect } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { AuthContext } from "../App"
 import { mockApi } from "../services/mockApi"
+import { getUOMs } from "../utils/storageManager"
 
 function NewFollowUp() {
   const navigate = useNavigate()
@@ -15,24 +16,29 @@ function NewFollowUp() {
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [enquiryStatus, setEnquiryStatus] = useState("")
-  const [items, setItems] = useState([{ id: "1", name: "", quantity: "" }])
+  const [items, setItems] = useState([{ id: "1", name: "", uom: "", quantity: "" }])
   const [formData, setFormData] = useState({
     leadNo: "",
     nextAction: "",
     nextCallDate: "",
     nextCallTime: "",
     customerFeedback: "",
-    enquiryApproach: "", // Add this new field
+    billingAddress: "",
+    shippingAddress: "",
+    freightType: "",
   })
 
-  const [leadStatus, setLeadStatus] = useState("")
+  // Pre-filled from the lead's original details once fetched
+  const [enquiryState, setEnquiryState] = useState("")
+  const [nob, setNob] = useState("")
+  const [city, setCity] = useState("")
+  const [division, setDivision] = useState("")
 
   // New state for dropdown options
   const [enquiryStates, setEnquiryStates] = useState([])
-  const [salesTypes, setSalesTypes] = useState([])
   const [productCategories, setProductCategories] = useState([]) // New state for product categories
   const [nobOptions, setNobOptions] = useState([])
-  const [enquiryApproachOptions, setEnquiryApproachOptions] = useState([])
+  const [uomOptions, setUomOptions] = useState([])
 
   // Function to fetch dropdown data from DROPDOWNSHEET
   // Function to fetch dropdown data from DROPDOWNSHEET
@@ -45,20 +51,23 @@ function NewFollowUp() {
         setEnquiryStates(data.states || [])
         // Using some default mappings for other dropdowns as they might not be in the initial simplified mockApi response
         // In a real scenario, mockApi.fetchDropdowns should return all these.
-        setSalesTypes(["NBD", "CRR", "NBD_CRR"])
         setProductCategories(["Product 1", "Product 2", "Product 3"])
         setNobOptions(data.nobs || [])
-        setEnquiryApproachOptions(["Approach 1", "Approach 2", "Approach 3"])
         setCustomerFeedbackOptions(["Interested", "Not Interested", "Asked for Quotation", "Callback Later"])
       }
     } catch (error) {
       console.error("Error fetching dropdown values:", error)
       // Fallback values
       setEnquiryStates(["Maharashtra", "Gujarat", "Karnataka", "Tamil Nadu", "Delhi"])
-      setSalesTypes(["NBD", "CRR", "NBD_CRR"])
       setProductCategories(["Product 1", "Product 2", "Product 3"])
       setNobOptions(["NOB 1", "NOB 2", "NOB 3"])
-      setEnquiryApproachOptions(["Approach 1", "Approach 2", "Approach 3"]) // Fallback for enquiry approach
+    }
+
+    // UOM is managed from the Master module
+    try {
+      setUomOptions(getUOMs().map(item => item.name))
+    } catch (error) {
+      console.error("Error loading UOM master data:", error)
     }
   }
 
@@ -72,6 +81,18 @@ function NewFollowUp() {
         ...prevData,
         leadNo: leadNo,
       }))
+
+      // Pre-fill Enquiry for State / NOB / City / Division from the lead's original details
+      mockApi.fetchLeadByNumber(leadNo).then((result) => {
+        if (result.success && result.lead) {
+          if (result.lead.state) setEnquiryState(result.lead.state)
+          if (result.lead.nob) setNob(result.lead.nob)
+          if (result.lead.city) setCity(result.lead.city)
+          if (result.lead.division) setDivision(result.lead.division)
+        }
+      }).catch((error) => {
+        console.error("Error fetching lead details for pre-fill:", error)
+      })
     }
   }, [leadNo])
 
@@ -103,7 +124,7 @@ function NewFollowUp() {
         formattedDate, // A: Current date
         formData.leadNo, // B: Lead Number
         document.getElementById("customerFeedback").value, // C: Customer feedback
-        leadStatus, // D: Hot/Cold/Warm status
+        "", // D: (Lead Status removed)
         enquiryStatus, // E: Enquiry Status
       ]
 
@@ -123,10 +144,10 @@ function NewFollowUp() {
         // Add columns F-K
         rowData.push(
           document.getElementById("enquiryDate").value, // F: Enquiry Received Date
-          document.getElementById("enquiryState").value, // G: Enquiry for State
-          document.getElementById("projectName").value, // H: Project Name (NOB)
-          document.getElementById("salesType").value, // I: Sales Type
-          formData.enquiryApproach, // J: Enquiry Approach
+          enquiryState, // G: Enquiry for State
+          nob, // H: Project Name (NOB)
+          "", // I: (Enquiry Type removed)
+          "", // J: (Enquiry Approach removed)
           "", // K: Project Value (empty)
         )
 
@@ -150,8 +171,8 @@ function NewFollowUp() {
           rowData.push("")
         }
 
-        // Add tracking status in column AB (index 27)
-        rowData.push(document.getElementById("leadsTrackingStatus").value)
+        // Column AB (index 27): (Leads Tracking Status removed)
+        rowData.push("")
 
         // Handle items 6 and onwards as JSON in column AC (index 28)
         if (items.length > 5) {
@@ -177,8 +198,11 @@ function NewFollowUp() {
       // Send the data
       const result = await mockApi.submitFollowUp({
         ...formData,
-        leadStatus,
         enquiryStatus,
+        enquiryState,
+        nob,
+        city,
+        division,
         items,
         rowData // Keeping raw rowData for structure if needed by mockApi later, or better yet pass structured data
       })
@@ -212,7 +236,7 @@ function NewFollowUp() {
     // Only add a new item if we haven't reached the maximum
     if (items.length < MAX_ITEMS) {
       const newId = (items.length + 1).toString()
-      setItems([...items, { id: newId, name: "", quantity: "" }])
+      setItems([...items, { id: newId, name: "", uom: "", quantity: "" }])
     }
   }
 
@@ -239,11 +263,11 @@ function NewFollowUp() {
         <form onSubmit={handleSubmit}>
           <div className="p-6 space-y-6">
             <div className="space-y-2">
-              <label htmlFor="enquiryNo" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="leadNo" className="block text-sm font-medium text-gray-700">
                 Lead No.
               </label>
               <input
-                id="enquiryNo"
+                id="leadNo"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
                 placeholder="LD-001"
                 value={formData.leadNo}
@@ -271,54 +295,6 @@ function NewFollowUp() {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">Lead Status</label>
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="radio"
-                    id="hot"
-                    name="leadStatus"
-                    value="hot"
-                    checked={leadStatus === "Relevant"}
-                    onChange={() => setLeadStatus("Relevant")}
-                    className="h-4 w-4 text-red-600 focus:ring-red-500"
-                  />
-                  <label htmlFor="hot" className="text-sm text-gray-700">
-                    Relevant
-                  </label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="radio"
-                    id="warm"
-                    name="leadStatus"
-                    value="warm"
-                    checked={leadStatus === "Not Relevant"}
-                    onChange={() => setLeadStatus("Not Relevant")}
-                    className="h-4 w-4 text-sky-600 focus:ring-sky-500"
-                  />
-                  <label htmlFor="warm" className="text-sm text-gray-700">
-                    Not Relevant
-                  </label>
-                </div>
-                {/* <div className="flex items-center space-x-2">
-                  <input
-                    type="radio"
-                    id="cold"
-                    name="leadStatus"
-                    value="cold"
-                    checked={leadStatus === "cold"}
-                    onChange={() => setLeadStatus("cold")}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500"
-                  />
-                  <label htmlFor="cold" className="text-sm text-gray-700">
-                    Cold
-                  </label>
-                </div> */}
-              </div>
-            </div>
-
-            <div className="space-y-2">
               <label className="block text-sm font-medium text-gray-700">Enquiry Received Status</label>
               <div className="space-y-1">
                 <div className="flex items-center space-x-2">
@@ -332,7 +308,7 @@ function NewFollowUp() {
                     className="h-4 w-4 text-sky-600 focus:ring-sky-500"
                   />
                   <label htmlFor="yes" className="text-sm text-gray-700">
-                    Yes
+                    Order Receive
                   </label>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -410,13 +386,13 @@ function NewFollowUp() {
 
             {enquiryStatus === "yes" && (
               <div className="space-y-6 border p-4 rounded-md">
-                <h3 className="text-lg font-medium">Enquiry Details</h3>
+                <h3 className="text-lg font-medium">Order Details</h3>
                 <hr className="border-gray-200" />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label htmlFor="enquiryDate" className="block text-sm font-medium text-gray-700">
-                      Enquiry Received Date
+                      Order Received Date
                     </label>
                     <input
                       id="enquiryDate"
@@ -433,6 +409,8 @@ function NewFollowUp() {
                     <select
                       id="enquiryState"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      value={enquiryState}
+                      onChange={(e) => setEnquiryState(e.target.value)}
                       required
                     >
                       <option value="">Select state</option>
@@ -451,68 +429,61 @@ function NewFollowUp() {
                     <select
                       id="projectName"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      value={nob}
+                      onChange={(e) => setNob(e.target.value)}
                       required
                     >
                       <option value="">Select NOB</option>
-                      {nobOptions.map((nob, index) => (
-                        <option key={index} value={nob}>
-                          {nob}
+                      {nobOptions.map((nobOption, index) => (
+                        <option key={index} value={nobOption}>
+                          {nobOption}
                         </option>
                       ))}
                     </select>
                   </div>
 
                   <div className="space-y-2">
-                    <label htmlFor="salesType" className="block text-sm font-medium text-gray-700">
-                      Enquiry Type
+                    <label htmlFor="freightType" className="block text-sm font-medium text-gray-700">
+                      Freight Type
                     </label>
                     <select
-                      id="salesType"
+                      id="freightType"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                      required
-                    >
-                      <option value="">Select type</option>
-                      {salesTypes.map((type, index) => (
-                        <option key={index} value={type}>
-                          {type}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label htmlFor="enquiryApproach" className="block text-sm font-medium text-gray-700">
-                      Enquiry Approach
-                    </label>
-                    <select
-                      id="enquiryApproach"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                      value={formData.enquiryApproach}
+                      value={formData.freightType}
                       onChange={handleChange}
                       required
                     >
-                      <option value="">Select approach</option>
-                      {enquiryApproachOptions.map((approach, index) => (
-                        <option key={index} value={approach}>
-                          {approach}
-                        </option>
-                      ))}
+                      <option value="">Select freight type</option>
+                      <option value="FOR">FOR</option>
+                      <option value="Ex-Factory">Ex-Factory</option>
+                      <option value="Ex-Factory at Transport Office">Ex-Factory at Transport Office</option>
                     </select>
                   </div>
 
                   <div className="space-y-2">
-                    <label htmlFor="leadsTrackingStatus" className="block text-sm font-medium text-gray-700">
-                      Leads Tracking Status
+                    <label htmlFor="city" className="block text-sm font-medium text-gray-700">
+                      City
                     </label>
-                    <select
-                      id="leadsTrackingStatus"
+                    <input
+                      id="city"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                      required
-                    >
-                      <option value="">Select status</option>
-                      <option value="Pending">Pending</option>
-                      <option value="Completed">Completed</option>
-                    </select>
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      placeholder="City will auto-fill"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="division" className="block text-sm font-medium text-gray-700">
+                      Division
+                    </label>
+                    <input
+                      id="division"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      value={division}
+                      onChange={(e) => setDivision(e.target.value)}
+                      placeholder="Division will auto-fill"
+                    />
                   </div>
 
                   {/* <div className="space-y-2">
@@ -541,6 +512,38 @@ function NewFollowUp() {
                   </div> */}
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label htmlFor="billingAddress" className="block text-sm font-medium text-gray-700">
+                      Billing Address
+                    </label>
+                    <textarea
+                      id="billingAddress"
+                      value={formData.billingAddress}
+                      onChange={handleChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      placeholder="Enter billing address"
+                      rows="2"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="shippingAddress" className="block text-sm font-medium text-gray-700">
+                      Shipping Address
+                    </label>
+                    <textarea
+                      id="shippingAddress"
+                      value={formData.shippingAddress}
+                      onChange={handleChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      placeholder="Enter shipping address"
+                      rows="2"
+                      required
+                    />
+                  </div>
+                </div>
+
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h4 className="font-medium">Items</h4>
@@ -556,9 +559,9 @@ function NewFollowUp() {
 
                   {items.map((item, index) => (
                     <div key={item.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-                      <div className="md:col-span-5 space-y-2">
+                      <div className="md:col-span-4 space-y-2">
                         <label htmlFor={`itemName-${item.id}`} className="block text-sm font-medium text-gray-700">
-                          Item Name 1
+                          Item Name {index + 1}
                         </label>
                         <input
                           list={`item-options-${item.id}`}
@@ -576,8 +579,27 @@ function NewFollowUp() {
                         </datalist>
                       </div>
 
+                      <div className="md:col-span-3 space-y-2">
+                        <label htmlFor={`uom-${item.id}`} className="block text-sm font-medium text-gray-700">
+                          UOM
+                        </label>
+                        <select
+                          id={`uom-${item.id}`}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                          value={item.uom}
+                          onChange={(e) => updateItem(item.id, "uom", e.target.value)}
+                          required
+                        >
+                          <option value="">Select UOM</option>
+                          {uomOptions.map((uom, index) => (
+                            <option key={index} value={uom}>
+                              {uom}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                      <div className="md:col-span-5 space-y-2">
+                      <div className="md:col-span-3 space-y-2">
                         <label htmlFor={`quantity-${item.id}`} className="block text-sm font-medium text-gray-700">
                           Quantity
                         </label>

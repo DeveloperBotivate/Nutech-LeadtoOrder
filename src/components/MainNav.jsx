@@ -19,17 +19,16 @@ function MainNav({ logout, setMobileMenuOpen }) {
     }
     if (path.startsWith("/follow-up")) return {
       title: "Call Tracker",
-      description: "Track and manage all your follow-up calls"
+      description: ""
     }
-    if (path.startsWith("/call-tracker")) return {
-      title: "Enquiry Tracker",
-      description: "Track the progress of enquiries through the sales pipeline"
+    if (path.startsWith("/master")) return {
+      title: "Master",
+      description: "Manage the master data used across the system"
     }
     return { title: "", description: "" }
   }
 
   const { title, description } = getPageHeader()
-  const showAdminView = (location.pathname.startsWith("/follow-up") || location.pathname.startsWith("/call-tracker")) && isAdmin && isAdmin()
 
   return (
     <header className="sticky top-0 z-40 flex h-auto min-h-[4rem] w-full items-center justify-between border-b bg-white px-4 py-2 shadow-sm">
@@ -45,7 +44,6 @@ function MainNav({ logout, setMobileMenuOpen }) {
         <div className="flex flex-col">
           {title && <h1 className="text-xl font-bold bg-gradient-to-r from-sky-600 to-blue-600 bg-clip-text text-transparent">{title}</h1>}
           {description && <p className="text-sm text-slate-500 hidden md:block">{description}</p>}
-          {showAdminView && <p className="text-green-600 font-semibold text-xs mt-0.5">Admin View: Showing all data</p>}
         </div>
       </div>
 

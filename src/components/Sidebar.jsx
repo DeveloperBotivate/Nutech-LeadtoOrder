@@ -1,11 +1,11 @@
 "use client"
 
 import { Link, useLocation } from "react-router-dom"
-import { HomeIcon, UsersIcon, PhoneCallIcon, BarChartIcon, FileTextIcon, ShieldIcon, LogoutIcon } from "./Icons"
+import { HomeIcon, UsersIcon, PhoneCallIcon, FileTextIcon, ShieldIcon, LogoutIcon } from "./Icons"
+import { Database, Wallet } from "lucide-react"
 import { useContext } from "react"
 import { AuthContext } from "../App"
-import botivateLogo from "../assests/Botivate-logo.png"
-import userAvatarLogo from "../assests/user-avatar-logo.png"
+import nutechLogo from "../assests/Nutechlogo.png"
 
 function Sidebar({ mobileMenuOpen, setMobileMenuOpen }) {
     const location = useLocation()
@@ -32,16 +32,22 @@ function Sidebar({ mobileMenuOpen, setMobileMenuOpen }) {
             active: location.pathname.startsWith("/follow-up"),
         },
         {
-            href: "/call-tracker",
-            label: "Enquiry Tracker",
-            icon: <BarChartIcon className="h-5 w-5 mr-3" />,
-            active: location.pathname.startsWith("/call-tracker"),
-        },
-        {
             href: "/quotation",
             label: "Quotation",
             icon: <FileTextIcon className="h-5 w-5 mr-3" />,
             active: location.pathname.startsWith("/quotation"),
+        },
+        {
+            href: "/advance-payment",
+            label: "Received Advance against PI",
+            icon: <Wallet className="h-5 w-5 mr-3" />,
+            active: location.pathname.startsWith("/advance-payment"),
+        },
+        {
+            href: "/master",
+            label: "Master",
+            icon: <Database className="h-5 w-5 mr-3" />,
+            active: location.pathname.startsWith("/master"),
         },
     ]
 
@@ -66,10 +72,8 @@ function Sidebar({ mobileMenuOpen, setMobileMenuOpen }) {
                 <div className="flex h-16 items-center justify-start border-b border-slate-100 px-6">
                     <Link to="/" className="flex items-center" onClick={() => setMobileMenuOpen(false)}>
                         <div className="flex flex-row items-center gap-2">
-                            <img src={userAvatarLogo} alt="Botivate" className="h-10 w-auto object-contain" />
-                            <span className="text-xl font-bold text-sky-600">
-                                Botivate
-                            </span>
+                            <img src={nutechLogo} alt="Nutech" className="h-10 w-auto object-contain" />
+                            
                         </div>
                     </Link>
                 </div>

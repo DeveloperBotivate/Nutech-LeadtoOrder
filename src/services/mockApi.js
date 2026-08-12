@@ -1,7 +1,26 @@
 
 import { users, dropdowns, companies, fmsData, quotations, enquiryTracker, enquiryToOrder, products } from '../data/dummyData';
+import {
+    getSubmittedLeads, saveSubmittedLead,
+    getResolvedLeadNumbers, markLeadResolved,
+    getQuotationReadyLeads, saveQuotationReadyLead,
+    getFollowUpHistory, addFollowUpHistory,
+    getCompanies,
+    getAdvancePayments, saveAdvancePayment,
+    getSavedQuotations, saveSavedQuotation
+} from '../utils/storageManager';
 
 const simulateDelay = () => new Promise(resolve => setTimeout(resolve, 500));
+
+// Helper function to determine priority based on lead source (mirrors the
+// badge logic on the Call Tracker page)
+const determinePriority = (source) => {
+    if (!source) return "Low";
+    const sourceLower = source.toLowerCase();
+    if (sourceLower.includes("indiamart")) return "High";
+    if (sourceLower.includes("website")) return "Medium";
+    return "Low";
+};
 
 export const mockApi = {
     login: async (username, password) => {
@@ -42,11 +61,59 @@ export const mockApi = {
         return companies;
     },
 
+    // Looks up a lead's originally-captured details (by its lead number) so
+    // follow-up forms can pre-fill fields like State/NOB instead of asking
+    // the user to re-enter them.
+    fetchLeadByNumber: async (leadNo) => {
+        await simulateDelay();
+        if (!leadNo) return { success: false };
+
+        const fmsMatch = fmsData.find(row => row.leadNumber === leadNo);
+        if (fmsMatch) {
+            return {
+                success: true,
+                lead: {
+                    state: fmsMatch.state || "",
+                    nob: fmsMatch.nob || "",
+                    city: fmsMatch.city || "",
+                    division: fmsMatch.division || "",
+                    address: fmsMatch.address || ""
+                }
+            };
+        }
+
+        const submittedMatch = getSubmittedLeads().find(lead => lead.leadNumber === leadNo);
+        if (submittedMatch) {
+            return {
+                success: true,
+                lead: {
+                    state: submittedMatch.state || "",
+                    nob: submittedMatch.nob || "",
+                    city: submittedMatch.city || "",
+                    division: submittedMatch.division || "",
+                    address: submittedMatch.address || ""
+                }
+            };
+        }
+
+        return { success: false };
+    },
+
     submitLead: async (leadData) => {
         await simulateDelay();
-        console.log("Submitting lead to dummy DB:", leadData);
-        // In a real app we'd push to fmsData, but for now just return success
-        return { success: true };
+
+        const existingLeads = getSubmittedLeads();
+        const leadNumber = `LD-${String(fmsData.length + existingLeads.length + 1).padStart(3, '0')}`;
+
+        const newLead = {
+            ...leadData,
+            leadNumber,
+            timestamp: new Date().toISOString()
+        };
+
+        saveSubmittedLead(newLead);
+
+        return { success: true, leadNumber };
     },
 
     generateLeadNumber: async () => {
@@ -83,6 +150,104 @@ export const mockApi = {
         };
     },
 
+    fetchPendingTasks: async (currentUser, isAdminFunc) => {
+        await simulateDelay();
+        
+        // Use existing fetchFollowUps for data
+        const followUpsData = await mockApi.fetchFollowUps(currentUser, isAdminFunc);
+        const pending = followUpsData.pending || [];
+        
+        // Format it for the PendingTasks widget
+        return pending.slice(0, 5).map(task => ({
+            id: task.id,
+            type: "Follow-up",
+            company: task.companyName,
+            reference: `Lead No: ${task.id}`,
+            date: task.nextCallDate || "Today",
+            actionText: "Call Now",
+            link: `/follow-up`
+        }));
+    },
+
+    fetchRecentActivities: async (currentUser, isAdminFunc) => {
+        await simulateDelay();
+        
+        const username = currentUser?.username;
+        const isAdmin = isAdminFunc();
+        const checkPerm = (userAssigned) => isAdmin || (userAssigned === username);
+        
+        const activities = [];
+        
+        // 1. New Leads
+        getSubmittedLeads().forEach(lead => {
+            if (checkPerm(lead.receiverName)) {
+                activities.push({
+                    user: lead.receiverName || "System",
+                    action: "Created a new lead",
+                    type: "Lead",
+                    detail: lead.companyName || "Unknown",
+                    time: lead.timestamp,
+                    dateObj: new Date(lead.timestamp || 0)
+                });
+            }
+        });
+        
+        // 2. Follow-up History (using basic date parse for dd/mm/yyyy if needed)
+        getFollowUpHistory().forEach(history => {
+            if (checkPerm(history.assignedTo)) {
+                let d = new Date();
+                if (history.timestamp && history.timestamp.includes('/')) {
+                    const parts = history.timestamp.split('/');
+                    if (parts.length === 3) d = new Date(parts[2], parts[1]-1, parts[0]);
+                }
+                activities.push({
+                    user: history.assignedTo || "System",
+                    action: `Follow-up: ${history.status}`,
+                    type: "Follow-up",
+                    detail: history.companyName || "Unknown",
+                    time: history.timestamp,
+                    dateObj: d
+                });
+            }
+        });
+        
+        // 3. Quotations
+        const savedQuots = getSavedQuotations();
+        Object.values(savedQuots).forEach(q => {
+            if (checkPerm(q.assignedUser || q.preparedBy)) {
+                activities.push({
+                    user: q.assignedUser || q.preparedBy || "System",
+                    action: "Saved quotation",
+                    type: "Quotation",
+                    detail: q.companyName || q.quotationNo || "Unknown",
+                    time: q.savedAt,
+                    dateObj: new Date(q.savedAt || 0)
+                });
+            }
+        });
+
+        // Sort by date (desc) and take top 5
+        activities.sort((a, b) => b.dateObj - a.dateObj);
+        
+        return activities.slice(0, 5).map(a => {
+            let timeStr = "Recently";
+            if (a.dateObj && !isNaN(a.dateObj.getTime())) {
+                const diffMs = new Date() - a.dateObj;
+                const diffMins = Math.floor(diffMs / 60000);
+                if (diffMins < 60) timeStr = `${Math.max(1, diffMins)} min ago`;
+                else if (diffMins < 1440) timeStr = `${Math.floor(diffMins/60)} hours ago`;
+                else timeStr = `${Math.floor(diffMins/1440)} days ago`;
+            }
+            return {
+                user: a.user,
+                action: a.action,
+                type: a.type,
+                detail: a.detail,
+                time: timeStr
+            };
+        });
+    },
+
     fetchFollowUps: async (currentUser, isAdminFunc) => {
         await simulateDelay();
 
@@ -97,20 +262,39 @@ export const mockApi = {
         // We will just use the dummy data as is and add missing fields on the fly if needed
         // or assume dummy data is shaped correctly.
 
+        // Leads whose follow-up already ended in "Order Receive" or "Not
+        // Interested" are done — drop them from Pending. "Expected" leaves
+        // a lead pending since it still needs a future follow-up.
+        const resolvedLeadNumbers = getResolvedLeadNumbers();
+
         const pendingFollowUps = fmsData.filter(row => {
             // assignedUser check
             const assignedUser = row.assignedUser;
             const shouldInclude = isAdminFunc() || assignedUser === username;
-            return shouldInclude && row.hasPendingFollowUp;
+            return shouldInclude && row.hasPendingFollowUp && !resolvedLeadNumbers.includes(row.leadNumber);
         }).map(row => ({
             timestamp: row.date,
             id: row.leadNumber,
             leadId: row.leadNumber,
             companyName: row.company,
-            personName: "John Doe", // Dummy
-            phoneNumber: "9876543210",
+            personName: row.personName,
+            phoneNumber: row.phoneNumber,
             leadSource: row.source,
-            location: "Mumbai",
+            leadType: row.leadType,
+            receiverName: row.receiver,
+            location: row.location,
+            email: row.email,
+            state: row.state,
+            city: row.city,
+            address: row.address,
+            gst: row.gst,
+            nob: row.nob,
+            division: row.division,
+            creditAccess: row.creditAccess,
+            creditDays: row.creditDays,
+            creditLimit: row.creditLimit,
+            contactPersons: row.contactPersons || [],
+            notes: row.notes,
             customerSay: "Interested",
             enquiryStatus: "New",
             createdAt: row.date,
@@ -120,166 +304,150 @@ export const mockApi = {
             itemQty: ""
         }));
 
+        // Leads submitted via the New Lead form also show up here as
+        // pending, until they're followed up on.
+        const submittedLeadFollowUps = getSubmittedLeads().filter(lead => {
+            const shouldInclude = isAdminFunc() || lead.receiverName === username;
+            return shouldInclude && !resolvedLeadNumbers.includes(lead.leadNumber);
+        }).map(lead => ({
+            timestamp: lead.timestamp,
+            id: lead.leadNumber,
+            leadId: lead.leadNumber,
+            companyName: lead.companyName,
+            personName: lead.salespersonName,
+            phoneNumber: lead.phoneNumber,
+            leadSource: lead.source,
+            leadType: lead.leadType,
+            receiverName: lead.receiverName,
+            location: lead.location,
+            email: lead.email,
+            state: lead.state,
+            city: lead.city,
+            address: lead.address,
+            gst: lead.gst,
+            nob: lead.nob,
+            division: lead.division,
+            creditAccess: lead.creditAccess,
+            creditDays: lead.creditDays,
+            creditLimit: lead.creditLimit,
+            contactPersons: lead.contactPersons || [],
+            notes: lead.notes,
+            customerSay: "",
+            enquiryStatus: "New",
+            createdAt: lead.date,
+            nextCallDate: "",
+            priority: determinePriority(lead.source),
+            assignedTo: lead.receiverName,
+            itemQty: ""
+        }));
+
         // History from leadsTracker. We don't have leadsTracker in dummyData yet.
         // Let's create a quick dummy array here or use existing
-        const historyFollowUps = [
-            {
-                timestamp: "01/12/2024",
-                leadNo: "LD-001",
-                companyName: "ABC Corp",
-                customerSay: "Called back",
-                status: "Pending",
-                enquiryReceivedStatus: "New",
-                enquiryReceivedDate: "01/12/2024",
-                enquiryState: "Maharashtra",
-                projectName: "Project A",
-                salesType: "Direct",
-                requiredProductDate: "10/12/2024",
-                projectApproxValue: "50000",
-                itemName1: "Item A",
-                quantity1: "10",
-                nextAction: "Call again",
-                nextCallDate: "05/12/2024",
-                nextCallTime: "10:00 AM",
-                historyDateFilter: "Date(2024,11,5)",
-                assignedTo: "Shadab",
-                itemQty: ""
-            }
-        ].filter(row => {
+        const hardcodedHistory = [];
+
+        const storedHistory = getFollowUpHistory();
+
+        const historyFollowUps = [...hardcodedHistory, ...storedHistory].filter(row => {
             const assignedUser = row.assignedTo;
             return isAdminFunc() || assignedUser === username;
         });
 
         return {
-            pending: pendingFollowUps,
+            pending: [...pendingFollowUps, ...submittedLeadFollowUps],
             history: historyFollowUps
-        };
-    },
-
-    fetchCallTrackers: async (currentUser, isAdminFunc) => {
-        await simulateDelay();
-        const username = currentUser?.username;
-
-        // Pending Call Trackers from FMS
-        // Condition: Column BA (index 52) has data AND Column BB (index 53) is empty
-        const pendingCallTrackers = fmsData.filter(row => {
-            const assignedUser = row.assignedUser; // Using same user assignment logic
-            const shouldInclude = isAdminFunc() || assignedUser === username;
-            // Dummy logic for pending call tracker
-            return shouldInclude && row.hasPendingCallTracker;
-        }).map((row, index) => ({
-            id: index + 1,
-            timestamp: row.date,
-            leadId: row.leadNumber,
-            receiverName: "Receiver",
-            leadSource: row.source,
-            salespersonName: "Salesperson",
-            phoneNumber: "9876543210",
-            companyName: row.company,
-            createdAt: row.date,
-            status: "Expected",
-            priority: "Medium", // Simplified
-            stage: "Pending",
-            dueDate: "",
-            assignedTo: row.assignedUser,
-            currentStage: "Stage 1",
-            callingDate: "today", // Simplified for filter testing
-            itemQty: ""
-        }));
-
-        // History Call Trackers from Enquiry Tracker (using enquiryTracker dummy data)
-        const historyCallTrackers = enquiryTracker.filter(row => {
-            // assignedUser logic needed if present in dummyData
-            // Assuming dummyData doesn't have assignedUser for enquiryTracker yet, we'll fake it or skip filter
-            return true;
-        }).map((row, index) => ({
-            id: index + 1,
-            timestamp: row.date,
-            enquiryNo: row.enquiryNo,
-            enquiryStatus: "Active",
-            customerFeedback: "Good",
-            currentStage: "Negotiation",
-            sendQuotationNo: "Q-123",
-            quotationSharedBy: "Sales",
-            quotationNumber: "Q-123",
-            valueWithoutTax: "1000",
-            valueWithTax: "1180",
-            quotationUpload: "",
-            quotationRemarks: "",
-            nextCallDate: "05/12/2024",
-            nextCallTime: "10:00 AM",
-            orderStatus: "Pending",
-            acceptanceVia: "",
-            paymentMode: "",
-            paymentTerms: "",
-            transportMode: "",
-            registrationFrom: "",
-            orderVideo: "",
-            acceptanceFile: "",
-            orderRemark: "",
-            apologyVideo: "",
-            reasonStatus: "",
-            reasonRemark: "",
-            holdReason: "",
-            holdingDate: "",
-            holdRemark: "",
-            priority: "Medium",
-            callingDate: "10/12/2024",
-            assignedTo: currentUser?.username || "admin", // Dummy assignment
-            itemQty: ""
-        }));
-
-        // Direct Enquiry Pending from Enquiry To Order (enquiryToOrder dummy data)
-        const directEnquiryPendingTrackers = enquiryToOrder.filter(row => {
-            return row.status === "Pending";
-        }).map((row, index) => ({
-            id: index + 1,
-            timestamp: row.date,
-            leadId: row.leadNumber,
-            receiverName: "Receiver",
-            leadSource: "Direct",
-            salespersonName: "Salesperson",
-            companyName: row.company,
-            createdAt: row.date,
-            status: "Expected",
-            priority: "High",
-            stage: "Pending",
-            dueDate: "",
-            assignedTo: currentUser?.username || "admin",
-            currentStage: "Order",
-            callingDate: "today",
-            callingDate1: "today",
-            itemQty: ""
-        }));
-
-        return {
-            pending: pendingCallTrackers,
-            history: historyCallTrackers,
-            directEnquiry: directEnquiryPendingTrackers
         };
     },
 
     submitFollowUp: async (data) => {
         await simulateDelay();
+
+        const leadNo = data.leadNo;
+
+        if (data.enquiryStatus === "not-interested") {
+            // Closed out with no order — drop it from the Pending list.
+            markLeadResolved(leadNo);
+        } else if (data.enquiryStatus === "yes") {
+            // "Order Receive" — drop it from Pending and hand its details
+            // over to the Quotation page's Lead No. picker.
+            markLeadResolved(leadNo);
+
+            const fmsMatch = fmsData.find(row => row.leadNumber === leadNo);
+            const submittedMatch = getSubmittedLeads().find(lead => lead.leadNumber === leadNo);
+            const source = fmsMatch || submittedMatch;
+
+            if (source) {
+                saveQuotationReadyLead(leadNo, {
+                    sheet: "FMS",
+                    companyName: source.company || source.companyName || "",
+                    // Kept for backward compatibility with older readers; prefer
+                    // billingAddress/shippingAddress below for new code.
+                    address: data.shippingAddress || source.address || "",
+                    billingAddress: data.billingAddress || source.address || "",
+                    shippingAddress: data.shippingAddress || source.address || "",
+                    state: data.enquiryState || source.state || "",
+                    city: data.city || source.city || "",
+                    division: data.division || source.division || "",
+                    freightType: data.freightType || "",
+                    contactName: source.personName || source.salespersonName || "",
+                    contactNo: source.phoneNumber || "",
+                    gstin: source.gst || "",
+                    // Items captured on the Call Tracker "Order Receive" form
+                    // ({name, uom, quantity} each) — carried through so the
+                    // Quotation page's Items & Quantities table can prefill
+                    // from them when this lead is selected.
+                    items: Array.isArray(data.items) ? data.items : [],
+                    rowData: []
+                });
+            }
+        }
+        // "expected" leaves the lead pending — nothing to do here.
+
+        // ADD: Save to History
+        const fmsMatch = fmsData.find(row => row.leadNumber === leadNo);
+        const submittedMatch = getSubmittedLeads().find(lead => lead.leadNumber === leadNo);
+        const source = fmsMatch || submittedMatch;
+
+        const dateObj = new Date();
+        const formattedDate = `${String(dateObj.getDate()).padStart(2, '0')}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${dateObj.getFullYear()}`;
+
+        const historyEntry = {
+            timestamp: formattedDate,
+            leadNo: leadNo,
+            companyName: source ? (source.company || source.companyName) : "",
+            division: data.division || (source ? (source.division || "") : ""),
+            enquiryCity: data.city || (source ? (source.city || "") : ""),
+            customerSay: data.customerFeedback || "",
+            status: data.enquiryStatus === "expected" ? "Pending" : "Completed",
+            enquiryReceivedStatus: data.enquiryStatus === "yes" ? "Order Receive" : data.enquiryStatus === "expected" ? "Expected" : "Not Interested",
+            enquiryReceivedDate: (data.rowData && data.rowData.length > 5) ? data.rowData[5] : "",
+            enquiryState: data.enquiryState || "",
+            projectName: data.nob || "",
+            salesType: data.freightType || "",
+            requiredProductDate: "", 
+            projectApproxValue: "", 
+            itemName1: data.items && data.items[0] ? data.items[0].name : "",
+            quantity1: data.items && data.items[0] ? data.items[0].quantity : "",
+            itemName2: data.items && data.items[1] ? data.items[1].name : "",
+            quantity2: data.items && data.items[1] ? data.items[1].quantity : "",
+            itemName3: data.items && data.items[2] ? data.items[2].name : "",
+            quantity3: data.items && data.items[2] ? data.items[2].quantity : "",
+            itemName4: data.items && data.items[3] ? data.items[3].name : "",
+            quantity4: data.items && data.items[3] ? data.items[3].quantity : "",
+            itemName5: data.items && data.items[4] ? data.items[4].name : "",
+            quantity5: data.items && data.items[4] ? data.items[4].quantity : "",
+            nextAction: data.nextAction || "",
+            nextCallDate: data.nextCallDate || "",
+            nextCallTime: data.nextCallTime || "",
+            historyDateFilter: `Date(${dateObj.getFullYear()},${dateObj.getMonth()},${dateObj.getDate()})`,
+            assignedTo: source ? (source.assignedUser || source.receiverName) : "",
+            itemQty: data.items ? JSON.stringify(data.items) : ""
+        };
+
+        addFollowUpHistory(historyEntry);
+
         // Mimic success
         console.log("Mock submit follow up:", data);
         return { success: true };
-    },
-
-    submitCallTracker: async (data) => {
-        await simulateDelay();
-        console.log("Mock submit call tracker:", data);
-        return { success: true };
-    },
-
-    fetchLatestQuotationNumber: async (enquiryNo) => {
-        await simulateDelay();
-        // Dummy logic
-        return "Q-123";
-    },
-
-    getLatestOrderNumber: async () => {
-        return "DO-05";
     },
 
     uploadFile: async (file) => {
@@ -310,7 +478,7 @@ export const mockApi = {
             }
         });
 
-        // Orders from Enquiry Tracker
+        // Orders from enquiry data
         enquiryTracker.forEach(row => {
             if (checkPerm(row) && row.orderReceived === "Yes") {
                 const parts = row.date.split('/');
@@ -368,14 +536,76 @@ export const mockApi = {
         return "NBD";
     },
 
+    // The Quotation page's Lead No. dropdown is scoped to exactly one
+    // source: leads whose Call Tracker follow-up outcome was "Order
+    // Receive" (see submitFollowUp -> saveQuotationReadyLead above). This
+    // is the "Call Tracker History" data the picker is meant to show.
+    // Once a lead already has a saved quotation/PO, it's dropped from the
+    // list so the same lead can't be used to create a second PO.
+    fetchCallTrackerLeads: async () => {
+        await simulateDelay();
+        const readyLeads = getQuotationReadyLeads();
+        const usedLeadNumbers = new Set(
+            Object.values(getSavedQuotations())
+                .map(q => q.leadNo)
+                .filter(Boolean)
+        );
+        return Object.entries(readyLeads)
+            .filter(([leadNo]) => !usedLeadNumbers.has(leadNo))
+            .map(([leadNo, data]) => ({
+                leadNo,
+                ...data
+            }));
+    },
+
+    // PO Number auto-generation: NTC/PO/<financial-year>/<sequence>,
+    // sequential within the current financial year based on the highest
+    // PO number already saved.
+    getNextPoNumber: async () => {
+        await simulateDelay();
+
+        const now = new Date();
+        const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+        const fy = `${String(fyStartYear).slice(-2)}-${String(fyStartYear + 1).slice(-2)}`;
+        const prefix = `NTC/PO/${fy}/`;
+
+        const saved = Object.values(getSavedQuotations());
+        const maxSeq = saved.reduce((max, q) => {
+            if (q.poNumber && q.poNumber.startsWith(prefix)) {
+                const seq = parseInt(q.poNumber.slice(prefix.length), 10);
+                if (!isNaN(seq) && seq > max) return seq;
+            }
+            return max;
+        }, 0);
+
+        return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+    },
+
+    // Real saved quotations (keyed by quotation number) take priority; the
+    // static dummy list is only a fallback for the couple of seed rows that
+    // predate real persistence.
     fetchExistingQuotations: async (isAdminFunc) => {
         await simulateDelay();
-        // Return simple list of numbers
-        return quotations.map(q => q.quotationNo);
+        const savedNumbers = Object.keys(getSavedQuotations());
+        const seedNumbers = quotations.map(q => q.quotationNo).filter(no => !savedNumbers.includes(no));
+        return [...seedNumbers, ...savedNumbers];
+    },
+
+    // Lists every saved quotation (one entry per revision — a Revise saves
+    // under a new number rather than overwriting), newest first, for the
+    // Quotation page's History tab.
+    fetchQuotationHistory: async () => {
+        await simulateDelay();
+        const saved = Object.values(getSavedQuotations());
+        return saved.sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
     },
 
     getQuotationData: async (quotationNo) => {
         await simulateDelay();
+        const saved = getSavedQuotations()[quotationNo];
+        if (saved) {
+            return { success: true, quotationData: saved };
+        }
         const quote = quotations.find(q => q.quotationNo === quotationNo);
         if (quote) {
             return { success: true, quotationData: quote };
@@ -386,33 +616,40 @@ export const mockApi = {
     saveQuotation: async (data, action = "save") => {
         await simulateDelay();
         console.log(`Mock ${action} quotation:`, data);
-        return { success: true, quotationNumber: data.quotationNumber || "NBD-NEW-001" };
-    },
 
-    fetchLastEnquiryNumber: async () => {
-        await simulateDelay();
-        return "En-023"; // Mock next number
-    },
+        // A real "Save Quotation" (not the "Send"/link-share action) persists
+        // the full quotation — so it shows up in the History tab and can be
+        // reloaded for Revise/Preview — and registers or refreshes this
+        // quotation's Received Advance against PI tracking entry. Its
+        // resolution status/remarks are preserved across re-saves (e.g.
+        // revisions) rather than being wiped back to "pending".
+        if (action === "save" && data.quotationNo) {
+            saveSavedQuotation(data.quotationNo, {
+                ...data,
+                savedAt: new Date().toISOString()
+            });
 
-    fetchEnquiryDropdowns: async () => {
-        await simulateDelay();
-        return {
-            sources: dropdowns.sources,
-            scNames: ["SC 1", "SC 2", "SC 3"], // Mock
-            states: dropdowns.states,
-            salesTypes: ["NBD", "CRR", "NBD_CRR"],
-            productCategories: products.map(p => p.name),
-            nobOptions: dropdowns.nobs,
-            approachOptions: ["Phone", "Email", "Visit"],
-            receivers: dropdowns.receivers,
-            assignToProjects: ["Project A", "Project B"]
-        };
-    },
+            const existing = getAdvancePayments()[data.quotationNo] || {};
+            saveAdvancePayment(data.quotationNo, {
+                quotationNo: data.quotationNo,
+                poNumber: data.poNumber || data.quotationNo,
+                leadNo: data.leadNo || "",
+                companyName: data.consigneeName || "",
+                division: data.consigneeDivision || "",
+                city: data.consigneeCity || "",
+                contactName: data.consigneeContactName || "",
+                contactNo: data.consigneeContactNo || "",
+                date: data.date || "",
+                freightType: data.freightType || "",
+                advancePayment: data.advancePayment || "No",
+                advanceAmount: data.advanceAmount || "",
+                receivedAdvance: existing.receivedAdvance || "",
+                status: existing.status || "",
+                remarks: existing.remarks || ""
+            });
+        }
 
-    submitEnquiry: async (data, action = "insert") => {
-        await simulateDelay();
-        console.log(`Mock submit enquiry (${action}):`, data);
-        return { success: true };
+        return { success: true, quotationNumber: data.quotationNo || "NTC-NEW-001" };
     },
 
     fetchProducts: async () => {
@@ -443,6 +680,40 @@ export const mockApi = {
             };
         });
 
+        // Overlay Company Master data — City and Division live there, so
+        // companies managed on the Master page enrich (or add to) the
+        // dropdown with those fields.
+        getCompanies().forEach(comp => {
+            response.companies[comp.name] = {
+                ...(response.companies[comp.name] || {}),
+                address: comp.address || response.companies[comp.name]?.address || "",
+                state: comp.state || response.companies[comp.name]?.state || "",
+                contactName: comp.contactPersons?.[0]?.name || response.companies[comp.name]?.contactName || "",
+                contactNo: comp.phone || response.companies[comp.name]?.contactNo || "",
+                gstin: comp.gst || response.companies[comp.name]?.gstin || "",
+                stateCode: response.companies[comp.name]?.stateCode || "27",
+                city: comp.city || "",
+                division: comp.division || ""
+            };
+        });
+
+        // Add Quotation Ready Leads to companies dropdown
+        const readyLeads = getQuotationReadyLeads();
+        Object.values(readyLeads).forEach(lead => {
+            if (lead.companyName) {
+                response.companies[lead.companyName] = {
+                    address: lead.address || "",
+                    state: lead.state || "",
+                    contactName: lead.contactName || "",
+                    contactNo: lead.contactNo || "",
+                    gstin: lead.gstin || "",
+                    stateCode: "27", // Default/simplified mapping
+                    city: lead.city || "",
+                    division: lead.division || ""
+                };
+            }
+        });
+
         // Populate states (using generic data for now as dummyData.dropdowns.states is just a list)
         dropdowns.states.forEach(state => {
             response.states[state] = {
@@ -462,47 +733,6 @@ export const mockApi = {
         });
 
         return response;
-    },
-
-    fetchValidationDropdowns: async () => {
-        await simulateDelay();
-        return {
-            sendStatusOptions: ["mail", "whatsapp", "both"],
-            validatorNameOptions: users.map(u => u.username)
-        };
-    },
-
-    fetchQuotationsForEnquiry: async (enquiryNo) => {
-        await simulateDelay();
-        // Return dummy quotation numbers if enquiryNo matches, or just return all/some
-        return quotations.map(q => q.quotationNo);
-    },
-
-    fetchOrderStatusDropdowns: async () => {
-        await simulateDelay();
-        return {
-            acceptanceViaOptions: ["email", "phone", "in-person", "other"],
-            paymentModeOptions: ["cash", "check", "bank-transfer", "credit-card"],
-            reasonStatusOptions: ["price", "competitor", "timeline", "specifications", "other"],
-            holdReasonOptions: ["budget", "approval", "project-delay", "reconsideration", "other"],
-            paymentTermsOptions: ["30", "45", "60", "90"],
-            conveyedOptions: ["Yes", "No"],
-            transportModeOptions: ["Road", "Air", "Sea", "Rail"],
-            creditDaysOptions: ["30", "45", "60", "90"],
-            creditLimitOptions: ["10000", "25000", "50000", "100000"]
-        };
-    },
-
-    fetchOrderExpectedDropdowns: async () => {
-        await simulateDelay();
-        return {
-            followupStatusOptions: ["Pending", "In Progress", "Completed", "Cancelled"]
-        };
-    },
-
-    generateSendQuotationNo: async (enquiryNo) => {
-        await simulateDelay();
-        return "1"; // Mock logic
     },
 
     fetchLeadNumbers: async () => {
@@ -543,6 +773,52 @@ export const mockApi = {
             }
         });
 
+        // Leads marked "Order Receive" on the Call Tracker follow-up form —
+        // real company/contact details captured during the lead's lifecycle,
+        // overriding the placeholder FMS/Enquiry entries above where they overlap.
+        Object.assign(leadNumbers, getQuotationReadyLeads());
+
         return leadNumbers;
+    },
+
+    // Received Advance against PI — one tracking entry per saved quotation
+    // (created by saveQuotation above). "Hold" (or no status yet) keeps an
+    // entry in Pending; "Sent to Order" / "Not Sent to Order" resolves it
+    // into History.
+    fetchAdvancePayments: async () => {
+        await simulateDelay();
+
+        const savedQuotations = getSavedQuotations();
+        // Join in the quotation's stored PDF (a data: URI) so Pending/History
+        // rows here can offer a "View PDF" action without duplicating the
+        // PDF data into the advance-payment entry itself.
+        const entries = Object.values(getAdvancePayments()).map(entry => ({
+            ...entry,
+            pdfUrl: savedQuotations[entry.quotationNo]?.pdfUrl || ""
+        }));
+
+        const pending = entries.filter(e => !e.status || e.status === "Hold");
+        const history = entries.filter(e => e.status === "Sent to Order" || e.status === "Not Sent to Order");
+
+        // Newest first
+        return {
+            pending: pending.slice().reverse(),
+            history: history.slice().reverse()
+        };
+    },
+
+    submitAdvancePaymentUpdate: async (quotationNo, updateData) => {
+        await simulateDelay();
+
+        if (!quotationNo) {
+            return { success: false, error: "Missing quotation number" };
+        }
+
+        saveAdvancePayment(quotationNo, {
+            ...updateData,
+            updatedAt: new Date().toISOString()
+        });
+
+        return { success: true };
     }
 };

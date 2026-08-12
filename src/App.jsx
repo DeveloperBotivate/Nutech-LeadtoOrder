@@ -7,10 +7,10 @@ import Dashboard from "./pages/Dashboard"
 import Leads from "./pages/Leads"
 import FollowUp from "./pages/FollowUp"
 import NewFollowUp from "./pages/NewFollowUp"
-import CallTracker from "./pages/CallTracker"
-import NewCallTracker from "./pages/NewCallTracker"
 // import Quotation from "./pages/Quotation"
 import Quotation from "./pages/Quotation/Quotation"
+import AdvancePayment from "./pages/AdvancePayment"
+import Master from "./pages/master/Master"
 import MainNav from "./components/MainNav"
 import Footer from "./components/Footer"
 import Notification from "./components/Notification"
@@ -191,26 +191,26 @@ function App() {
                     }
                   />
                   <Route
-                    path="/call-tracker"
-                    element={
-                      <ProtectedRoute>
-                        <CallTracker />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/call-tracker/new"
-                    element={
-                      <ProtectedRoute>
-                        <NewCallTracker />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
                     path="/quotation"
                     element={
                       <ProtectedRoute>
                         <Quotation />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/advance-payment"
+                    element={
+                      <ProtectedRoute>
+                        <AdvancePayment />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/master"
+                    element={
+                      <ProtectedRoute>
+                        <Master />
                       </ProtectedRoute>
                     }
                   />

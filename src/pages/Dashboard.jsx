@@ -18,14 +18,14 @@ function Dashboard() {
             </div>
           </div>
 
-          {/* <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-lg shadow-md p-6">
               <PendingTasks />
             </div>
             <div className="bg-white rounded-lg shadow-md p-6">
               <RecentActivities />
             </div>
-          </div> */}
+          </div>
         </div>
       </div>
     </div>

@@ -502,9 +502,9 @@ function Quotation() {
         // Use existing fallback logic if needed
       }
 
-
-      fetchDropdownData()
-    }, [])
+    }
+    fetchDropdownData()
+  }, [])
 
 
   // Add this function near the top of your component with other helper functions
