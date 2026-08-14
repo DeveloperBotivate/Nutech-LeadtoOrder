@@ -2,7 +2,7 @@
 
 import { Link, useLocation } from "react-router-dom"
 import { HomeIcon, UsersIcon, PhoneCallIcon, FileTextIcon, ShieldIcon, LogoutIcon } from "./Icons"
-import { Database, Wallet } from "lucide-react"
+import { Database, Wallet, Settings as SettingsIcon } from "lucide-react"
 import { useContext } from "react"
 import { AuthContext } from "../App"
 import nutechLogo from "../assests/Nutechlogo.png"
@@ -48,6 +48,12 @@ function Sidebar({ mobileMenuOpen, setMobileMenuOpen }) {
             label: "Master",
             icon: <Database className="h-5 w-5 mr-3" />,
             active: location.pathname.startsWith("/master"),
+        },
+        {
+            href: "/settings",
+            label: "Settings",
+            icon: <SettingsIcon className="h-5 w-5 mr-3" />,
+            active: location.pathname.startsWith("/settings"),
         },
     ]
 

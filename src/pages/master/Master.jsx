@@ -64,8 +64,8 @@ export default function Master() {
   };
 
   return (
-    <div className="p-0 sm:p-2 md:p-6 flex flex-col h-full min-h-0">
-      <div className="flex flex-col lg:flex-row gap-2 lg:gap-4 flex-1 min-h-0">
+    <div className="flex flex-col h-[calc(100vh-120px)] md:h-[calc(100vh-150px)] min-h-0 min-w-0">
+      <div className="flex flex-col lg:flex-row gap-2 lg:gap-4 flex-1 min-h-0 min-w-0">
 
         {/* Master Data sub-sidebar — desktop only */}
         <div className="hidden lg:flex lg:flex-col w-60 flex-shrink-0 bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
@@ -99,7 +99,7 @@ export default function Master() {
         </div>
 
         {/* Main column */}
-        <div className="flex flex-col flex-1 min-h-0 gap-2 md:gap-4">
+        <div className="flex flex-col flex-1 min-h-0 min-w-0 gap-2 md:gap-4">
           {/* Header with Filters */}
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 lg:gap-4 w-full">
             <div className="flex flex-col lg:flex-row w-full gap-2 lg:gap-3 items-center">
@@ -152,7 +152,7 @@ export default function Master() {
           </div>
 
           {/* Main Content Area */}
-          <div className="bg-white rounded-lg border border-gray-200 shadow-sm flex flex-col pt-1 mt-2 flex-1 min-h-0 overflow-hidden">
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm flex flex-col pt-1 mt-2 flex-1 min-h-0 min-w-0 overflow-hidden">
             {activeTab === 'Company' && <Company searchQuery={searchQuery} triggerAdd={triggerAddCompany} />}
             {activeTab === 'UOM' && <UOM searchQuery={searchQuery} triggerAdd={triggerAddUOM} />}
             {activeTab === 'Sales Person Name' && <LeadReceiverName searchQuery={searchQuery} triggerAdd={triggerAddLRN} />}

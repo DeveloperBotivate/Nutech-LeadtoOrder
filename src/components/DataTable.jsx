@@ -24,9 +24,9 @@ export default function DataTable({
   const endIndex = Math.min(currentPage * itemsPerPage, totalResults);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0 min-w-0">
       {/* Desktop / tablet table view */}
-      <div className="hidden md:block flex-1 min-h-0 overflow-auto">
+      <div className="hidden md:block flex-1 min-h-0 min-w-0 overflow-auto">
         <table className="w-full" style={{ minWidth }}>
           <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>

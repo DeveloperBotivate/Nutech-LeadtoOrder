@@ -3,7 +3,7 @@
 import { useState, useContext } from "react"
 import { useNavigate } from "react-router-dom"
 import { AuthContext } from "../App"
-import { users } from "../data/dummyData"
+import { getUsers } from "../utils/storageManager"
 import nutechLogo from "../assests/Nutechlogo.png"
 
 function Login() {
@@ -100,7 +100,7 @@ function Login() {
             <div className="mt-4 text-center text-sm text-gray-600">
               <p className="font-medium text-gray-700 mb-1.5">Demo credentials</p>
               <div className="space-y-1">
-                {users.map((u) => (
+                {getUsers().map((u) => (
                   <p key={u.username}>
                     <span className="font-mono font-semibold text-gray-800">{u.username}</span>
                     {" / "}

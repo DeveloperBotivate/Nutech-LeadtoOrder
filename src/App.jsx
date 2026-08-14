@@ -11,6 +11,7 @@ import NewFollowUp from "./pages/NewFollowUp"
 import Quotation from "./pages/Quotation/Quotation"
 import AdvancePayment from "./pages/AdvancePayment"
 import Master from "./pages/master/Master"
+import Settings from "./pages/Settings"
 import MainNav from "./components/MainNav"
 import Footer from "./components/Footer"
 import Notification from "./components/Notification"
@@ -211,6 +212,14 @@ function App() {
                     element={
                       <ProtectedRoute>
                         <Master />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/settings"
+                    element={
+                      <ProtectedRoute>
+                        <Settings />
                       </ProtectedRoute>
                     }
                   />

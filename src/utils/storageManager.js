@@ -17,6 +17,7 @@ const KEYS = {
   ADVANCE_PAYMENTS: "advance_payment_entries",
   TERMS_AND_CONDITIONS: "master_terms_and_conditions",
   SAVED_QUOTATIONS: "saved_quotations",
+  USERS: "master_users",
 };
 
 function readList(key) {
@@ -99,6 +100,15 @@ const seedUOMs = () => ([
   { id: "seed-uom-3", timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), uomNo: "UOM-003", name: "METER" },
 ]);
 
+// Same 3 demo accounts the app always shipped with (admin/123, Shadab/123,
+// user1/123), now division-aware and editable from the Settings page
+// instead of being a hardcoded, unmanageable list.
+const seedUsers = () => ([
+  { id: "seed-user-1", timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), userNo: "USR-001", username: "admin", password: "123", userType: "admin", division: "Management" },
+  { id: "seed-user-2", timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), userNo: "USR-002", username: "Shadab", password: "123", userType: "admin", division: "Sales" },
+  { id: "seed-user-3", timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(), userNo: "USR-003", username: "user1", password: "123", userType: "user", division: "Operations" },
+]);
+
 // ---------------- Companies ----------------
 
 export function getCompanies() {
@@ -167,6 +177,29 @@ export function saveUOMs(uoms) {
 export function saveUOM(uom) {
   const uoms = readList(KEYS.UOMS) || [];
   writeList(KEYS.UOMS, [...uoms, uom]);
+}
+
+// ---------------- Users (Settings page) ----------------
+// Backs both login (mockApi.login checks this list) and the "Demo
+// credentials" list on the Login page, so a user added here can log in and
+// shows up there immediately.
+
+export function getUsers() {
+  const existing = readList(KEYS.USERS);
+  if (existing !== null) return existing;
+
+  const seeded = seedUsers();
+  writeList(KEYS.USERS, seeded);
+  return seeded;
+}
+
+export function saveUsers(list) {
+  writeList(KEYS.USERS, list);
+}
+
+export function saveUser(user) {
+  const list = readList(KEYS.USERS) || [];
+  writeList(KEYS.USERS, [...list, user]);
 }
 
 // ---------------- Simple name-list masters ----------------

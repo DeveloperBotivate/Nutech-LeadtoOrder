@@ -142,7 +142,7 @@ export default function CreditLimit({ searchQuery, triggerAdd }) {
   );
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col flex-1 w-full min-h-0">
       <DataTable
         headers={headers}
         data={paginatedData}

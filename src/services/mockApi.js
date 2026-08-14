@@ -1,5 +1,5 @@
 
-import { users, dropdowns, companies, fmsData, quotations, enquiryToOrder, products } from '../data/dummyData';
+import { dropdowns, companies, fmsData, quotations, enquiryToOrder, products } from '../data/dummyData';
 import {
     getSubmittedLeads, saveSubmittedLead,
     getResolvedLeadNumbers, markLeadResolved,
@@ -7,7 +7,8 @@ import {
     getFollowUpHistory, addFollowUpHistory,
     getCompanies,
     getAdvancePayments, saveAdvancePayment,
-    getSavedQuotations, saveSavedQuotation
+    getSavedQuotations, saveSavedQuotation,
+    getUsers
 } from '../utils/storageManager';
 
 const simulateDelay = () => new Promise(resolve => setTimeout(resolve, 500));
@@ -137,13 +138,18 @@ const getNextLeadNumber = () => {
 export const mockApi = {
     login: async (username, password) => {
         await simulateDelay();
-        const user = users.find(u => u.username === username && u.password === password);
+        // Checks the Settings page's live Users list (seeded with the same
+        // 3 demo accounts the app always shipped with) instead of the old
+        // hardcoded dummyData import, so a user added/edited there can log
+        // in immediately.
+        const user = getUsers().find(u => u.username === username && u.password === password);
         if (user) {
             return {
                 success: true,
                 user: {
                     username: user.username,
                     userType: user.userType,
+                    division: user.division || "",
                     loginTime: new Date().toISOString()
                 }
             };
@@ -961,7 +967,7 @@ export const mockApi = {
             states: {},
             companies: {},
             references: {},
-            preparedBy: users.map(u => u.username)
+            preparedBy: getUsers().map(u => u.username)
         };
 
         // Populate companies
