@@ -4,7 +4,7 @@ import { ArrowRightIcon, ClockIcon } from "../Icons"
 import { AuthContext } from "../../App"
 import { mockApi } from "../../services/mockApi"
 
-function PendingTasks() {
+function PendingTasks({ filters }) {
   const { currentUser, isAdmin } = useContext(AuthContext)
   const [tasks, setTasks] = useState([])
   const [isLoading, setIsLoading] = useState(true)
@@ -13,7 +13,7 @@ function PendingTasks() {
     const fetchTasks = async () => {
       try {
         setIsLoading(true)
-        const data = await mockApi.fetchPendingTasks(currentUser, isAdmin)
+        const data = await mockApi.fetchPendingTasks(currentUser, isAdmin, filters)
         setTasks(data)
       } catch (error) {
         console.error("Error fetching pending tasks:", error)
@@ -24,7 +24,7 @@ function PendingTasks() {
     }
 
     fetchTasks()
-  }, [currentUser, isAdmin])
+  }, [currentUser, isAdmin, filters])
 
   if (isLoading) {
     return (

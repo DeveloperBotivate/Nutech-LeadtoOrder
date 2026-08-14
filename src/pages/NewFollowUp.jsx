@@ -1,17 +1,19 @@
 "use client"
 
 import { useState, useContext, useEffect } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom"
 import { AuthContext } from "../App"
 import { mockApi } from "../services/mockApi"
-import { getUOMs } from "../utils/storageManager"
+import { getUOMs, getCreditDays, getCreditLimits } from "../utils/storageManager"
 
 function NewFollowUp() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const companyContext = location.state?.companyContext
   const [searchParams] = useSearchParams()
   const leadId = searchParams.get("leadId")
   const leadNo = searchParams.get("leadNo")
-  const { showNotification } = useContext(AuthContext)
+  const { currentUser, showNotification } = useContext(AuthContext)
   const [customerFeedbackOptions, setCustomerFeedbackOptions] = useState([])
 
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -23,9 +25,14 @@ function NewFollowUp() {
     nextCallDate: "",
     nextCallTime: "",
     customerFeedback: "",
+    interaction: "",
     billingAddress: "",
     shippingAddress: "",
     freightType: "",
+    gst: "",
+    creditAccess: "",
+    creditDays: "",
+    creditLimit: "",
   })
 
   // Pre-filled from the lead's original details once fetched
@@ -33,12 +40,14 @@ function NewFollowUp() {
   const [nob, setNob] = useState("")
   const [city, setCity] = useState("")
   const [division, setDivision] = useState("")
+  const [leadAttachment, setLeadAttachment] = useState("")
 
   // New state for dropdown options
-  const [enquiryStates, setEnquiryStates] = useState([])
   const [productCategories, setProductCategories] = useState([]) // New state for product categories
   const [nobOptions, setNobOptions] = useState([])
   const [uomOptions, setUomOptions] = useState([])
+  const [creditDaysOptions, setCreditDaysOptions] = useState([])
+  const [creditLimitOptions, setCreditLimitOptions] = useState([])
 
   // Function to fetch dropdown data from DROPDOWNSHEET
   // Function to fetch dropdown data from DROPDOWNSHEET
@@ -48,7 +57,6 @@ function NewFollowUp() {
       const data = await mockApi.fetchDropdowns()
 
       if (data) {
-        setEnquiryStates(data.states || [])
         // Using some default mappings for other dropdowns as they might not be in the initial simplified mockApi response
         // In a real scenario, mockApi.fetchDropdowns should return all these.
         setProductCategories(["Product 1", "Product 2", "Product 3"])
@@ -58,16 +66,17 @@ function NewFollowUp() {
     } catch (error) {
       console.error("Error fetching dropdown values:", error)
       // Fallback values
-      setEnquiryStates(["Maharashtra", "Gujarat", "Karnataka", "Tamil Nadu", "Delhi"])
       setProductCategories(["Product 1", "Product 2", "Product 3"])
       setNobOptions(["NOB 1", "NOB 2", "NOB 3"])
     }
 
-    // UOM is managed from the Master module
+    // UOM, Credit Days & Credit Limit are managed from the Master module
     try {
       setUomOptions(getUOMs().map(item => item.name))
+      setCreditDaysOptions(getCreditDays().map(item => item.name))
+      setCreditLimitOptions(getCreditLimits().map(item => item.name))
     } catch (error) {
-      console.error("Error loading UOM master data:", error)
+      console.error("Error loading master dropdown data:", error)
     }
   }
 
@@ -75,8 +84,18 @@ function NewFollowUp() {
     // Fetch dropdown data when component mounts
     fetchDropdownData()
 
-    // Prepopulate lead number if available
-    if (leadNo) {
+    if (companyContext) {
+      // Pre-fill fields from the company context (Enquiry flow)
+      if (companyContext.state) setEnquiryState(companyContext.state)
+      if (companyContext.nob) setNob(companyContext.nob)
+      if (companyContext.city) setCity(companyContext.city)
+      if (companyContext.division) setDivision(companyContext.division)
+      setFormData((prevData) => ({
+        ...prevData,
+        leadNo: "Auto-generated on Save",
+      }))
+    } else if (leadNo) {
+      // Prepopulate lead number if available
       setFormData((prevData) => ({
         ...prevData,
         leadNo: leadNo,
@@ -89,6 +108,7 @@ function NewFollowUp() {
           if (result.lead.nob) setNob(result.lead.nob)
           if (result.lead.city) setCity(result.lead.city)
           if (result.lead.division) setDivision(result.lead.division)
+          if (result.lead.attachment) setLeadAttachment(result.lead.attachment)
         }
       }).catch((error) => {
         console.error("Error fetching lead details for pre-fill:", error)
@@ -104,6 +124,18 @@ function NewFollowUp() {
     }))
   }
 
+  // The combined "Next Call Date & Time" input splits back into the
+  // separate nextCallDate/nextCallTime fields the rest of the form (and the
+  // saved history record) already uses.
+  const handleNextCallDateTimeChange = (e) => {
+    const [date, time] = e.target.value.split("T")
+    setFormData((prevData) => ({
+      ...prevData,
+      nextCallDate: date || "",
+      nextCallTime: time || "",
+    }))
+  }
+
   const calculateTotalQuantity = () => {
     return items.reduce((total, item) => {
       const quantity = parseInt(item.quantity) || 0
@@ -116,14 +148,25 @@ function NewFollowUp() {
     setIsSubmitting(true)
 
     try {
+      let finalLeadNo = formData.leadNo;
+
+      if (companyContext && finalLeadNo === "Auto-generated on Save") {
+        const leadResult = await mockApi.createEnquiryLead(companyContext, currentUser?.username);
+        if (leadResult.success) {
+           finalLeadNo = leadResult.leadNumber;
+        } else {
+           throw new Error("Failed to create enquiry lead.");
+        }
+      }
+
       const currentDate = new Date()
       const formattedDate = formatDate(currentDate)
 
       // Prepare base row data (columns A-E)
       const rowData = [
         formattedDate, // A: Current date
-        formData.leadNo, // B: Lead Number
-        document.getElementById("customerFeedback").value, // C: Customer feedback
+        finalLeadNo, // B: Lead Number
+        formData.customerFeedback, // C: Customer feedback
         "", // D: (Lead Status removed)
         enquiryStatus, // E: Enquiry Status
       ]
@@ -135,15 +178,15 @@ function NewFollowUp() {
 
         // Then add columns V, W, X
         rowData.push(
-          document.getElementById("nextAction").value, // V: Next action
-          document.getElementById("nextCallDate").value, // W: Next call date
-          document.getElementById("nextCallTime").value, // X: Next call time
+          formData.nextAction, // V: Next action
+          formData.nextCallDate, // W: Next call date
+          formData.nextCallTime, // X: Next call time
         )
       }
       else if (enquiryStatus === "yes") {
         // Add columns F-K
         rowData.push(
-          document.getElementById("enquiryDate").value, // F: Enquiry Received Date
+          formattedDate, // F: Enquiry Received Date (Order Received Date field removed — uses today's date)
           enquiryState, // G: Enquiry for State
           nob, // H: Project Name (NOB)
           "", // I: (Enquiry Type removed)
@@ -198,6 +241,7 @@ function NewFollowUp() {
       // Send the data
       const result = await mockApi.submitFollowUp({
         ...formData,
+        leadNo: finalLeadNo,
         enquiryStatus,
         enquiryState,
         nob,
@@ -268,12 +312,32 @@ function NewFollowUp() {
               </label>
               <input
                 id="leadNo"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 ${formData.leadNo === "Auto-generated on Save" ? "bg-gray-100 text-gray-500" : ""}`}
                 placeholder="LD-001"
                 value={formData.leadNo}
                 onChange={handleChange}
                 required
+                readOnly={formData.leadNo === "Auto-generated on Save"}
               />
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">Attachment (from Lead)</label>
+              {leadAttachment ? (
+                <a
+                  href={leadAttachment}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-3 py-2 border border-sky-200 text-sky-600 hover:bg-sky-50 rounded-md text-sm font-medium transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                  View Attachment
+                </a>
+              ) : (
+                <p className="text-sm text-gray-400">No attachment on file for this lead.</p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -283,6 +347,8 @@ function NewFollowUp() {
               <input
                 list="customer-feedback-options"
                 id="customerFeedback"
+                value={formData.customerFeedback}
+                onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
                 placeholder="Select or type customer feedback"
                 required
@@ -292,6 +358,23 @@ function NewFollowUp() {
                   <option key={index} value={feedback} />
                 ))}
               </datalist>
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="interaction" className="block text-sm font-medium text-gray-700">
+                Interaction
+              </label>
+              <select
+                id="interaction"
+                value={formData.interaction}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="">Select interaction type</option>
+                <option value="Call">Call</option>
+                <option value="WP">WP</option>
+                <option value="Visit">Visit</option>
+              </select>
             </div>
 
             <div className="space-y-2">
@@ -350,36 +433,26 @@ function NewFollowUp() {
                   </label>
                   <input
                     id="nextAction"
+                    value={formData.nextAction}
+                    onChange={handleChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
                     placeholder="Enter next action"
                     required
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label htmlFor="nextCallDate" className="block text-sm font-medium text-gray-700">
-                      Next Call Date
-                    </label>
-                    <input
-                      id="nextCallDate"
-                      type="date"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label htmlFor="nextCallTime" className="block text-sm font-medium text-gray-700">
-                      Next Call Time
-                    </label>
-                    <input
-                      id="nextCallTime"
-                      type="time"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                      required
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <label htmlFor="nextCallDateTime" className="block text-sm font-medium text-gray-700">
+                    Next Call Date & Time
+                  </label>
+                  <input
+                    id="nextCallDateTime"
+                    type="datetime-local"
+                    value={formData.nextCallDate && formData.nextCallTime ? `${formData.nextCallDate}T${formData.nextCallTime}` : ""}
+                    onChange={handleNextCallDateTimeChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    required
+                  />
                 </div>
               </div>
             )}
@@ -390,38 +463,6 @@ function NewFollowUp() {
                 <hr className="border-gray-200" />
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label htmlFor="enquiryDate" className="block text-sm font-medium text-gray-700">
-                      Order Received Date
-                    </label>
-                    <input
-                      id="enquiryDate"
-                      type="date"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label htmlFor="enquiryState" className="block text-sm font-medium text-gray-700">
-                      Enquiry for State
-                    </label>
-                    <select
-                      id="enquiryState"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                      value={enquiryState}
-                      onChange={(e) => setEnquiryState(e.target.value)}
-                      required
-                    >
-                      <option value="">Select state</option>
-                      {enquiryStates.map((state, index) => (
-                        <option key={index} value={state}>
-                          {state}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
                   <div className="space-y-2">
                     <label htmlFor="projectName" className="block text-sm font-medium text-gray-700">
                       NOB
@@ -484,6 +525,69 @@ function NewFollowUp() {
                       onChange={(e) => setDivision(e.target.value)}
                       placeholder="Division will auto-fill"
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="gst" className="block text-sm font-medium text-gray-700">
+                      GST Number
+                    </label>
+                    <input
+                      id="gst"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      value={formData.gst}
+                      onChange={handleChange}
+                      placeholder="GST number"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="creditAccess" className="block text-sm font-medium text-gray-700">
+                      Credit Access
+                    </label>
+                    <select
+                      id="creditAccess"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      value={formData.creditAccess}
+                      onChange={handleChange}
+                    >
+                      <option value="">Select option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="creditDays" className="block text-sm font-medium text-gray-700">
+                      Credit Days
+                    </label>
+                    <select
+                      id="creditDays"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      value={formData.creditDays}
+                      onChange={handleChange}
+                    >
+                      <option value="">Select credit days</option>
+                      {creditDaysOptions.map((option, index) => (
+                        <option key={index} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="creditLimit" className="block text-sm font-medium text-gray-700">
+                      Credit Limit
+                    </label>
+                    <select
+                      id="creditLimit"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      value={formData.creditLimit}
+                      onChange={handleChange}
+                    >
+                      <option value="">Select credit limit</option>
+                      {creditLimitOptions.map((option, index) => (
+                        <option key={index} value={option}>{option}</option>
+                      ))}
+                    </select>
                   </div>
 
                   {/* <div className="space-y-2">

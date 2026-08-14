@@ -1,5 +1,5 @@
 
-import { users, dropdowns, companies, fmsData, quotations, enquiryTracker, enquiryToOrder, products } from '../data/dummyData';
+import { users, dropdowns, companies, fmsData, quotations, enquiryToOrder, products } from '../data/dummyData';
 import {
     getSubmittedLeads, saveSubmittedLead,
     getResolvedLeadNumbers, markLeadResolved,
@@ -20,6 +20,118 @@ const determinePriority = (source) => {
     if (sourceLower.includes("indiamart")) return "High";
     if (sourceLower.includes("website")) return "Medium";
     return "Low";
+};
+
+// ---- Dashboard filter helpers (Sales Person / Division / Date range) ----
+
+// Accepts "dd/mm/yyyy" (leads/history) or an ISO date/timestamp (saved
+// quotations/advance payments) and returns a comparable Date, or null.
+const parseFlexibleDate = (value) => {
+    if (!value) return null;
+    if (typeof value === "string" && value.includes("/")) {
+        const [d, m, y] = value.split("/");
+        if (!d || !m || !y) return null;
+        const parsed = new Date(Number(y), Number(m) - 1, Number(d));
+        return isNaN(parsed.getTime()) ? null : parsed;
+    }
+    const parsed = new Date(value);
+    return isNaN(parsed.getTime()) ? null : parsed;
+};
+
+// <input type="date"> always hands back "YYYY-MM-DD" — parse it as a LOCAL
+// calendar date rather than via `new Date("YYYY-MM-DD")`, which the JS spec
+// treats as UTC midnight. Comparing that UTC instant against the local-time
+// dates parseFlexibleDate builds could exclude records dated exactly on the
+// From/To boundary day in any positive-UTC-offset timezone (e.g. IST).
+const parseLocalISODate = (value) => {
+    if (!value) return null;
+    const [y, m, d] = value.split("-").map(Number);
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d);
+};
+
+const dateInRange = (value, dateFrom, dateTo) => {
+    if (!dateFrom && !dateTo) return true;
+    const date = parseFlexibleDate(value);
+    if (!date) return false;
+    if (dateFrom) {
+        const from = parseLocalISODate(dateFrom);
+        if (from && date < from) return false;
+    }
+    if (dateTo) {
+        const to = parseLocalISODate(dateTo);
+        if (to) {
+            to.setHours(23, 59, 59, 999);
+            if (date > to) return false;
+        }
+    }
+    return true;
+};
+
+// Sales Person / Division / Date filters, layered on top of whatever
+// admin-vs-own-data permission check already applied.
+const matchesExtraFilters = (owner, division, dateValue, filters) => {
+    const { salesPerson, division: divisionFilter, dateFrom, dateTo } = filters || {};
+    if (salesPerson && salesPerson !== "All" && (owner || "") !== salesPerson) return false;
+    if (divisionFilter && divisionFilter !== "All" && (division || "") !== divisionFilter) return false;
+    if (!dateInRange(dateValue, dateFrom, dateTo)) return false;
+    return true;
+};
+
+// Quotations and Advance Payment entries don't carry their own salesperson
+// — they're attributed to whoever owns the lead that produced them.
+const buildLeadOwnerMap = () => {
+    const map = {};
+    fmsData.forEach(row => {
+        map[row.leadNumber] = { owner: row.receiver || row.assignedUser || "", division: row.division || "" };
+    });
+    getSubmittedLeads().forEach(lead => {
+        map[lead.leadNumber] = { owner: lead.receiverName || "", division: lead.division || "" };
+    });
+    return map;
+};
+
+// A revised quotation ("NTC/PO/26-27/001-R1") is saved as its own record
+// alongside the one it revised — the same deal, not a second one — so
+// anything counting "quotations sent" per lead must collapse each lead
+// down to just its latest revision first, or a single quoted lead inflates
+// the count (and its summed amount) once per revision.
+const getBaseQuotationNo = (no) => (no || "").replace(/-R\d+$/i, "");
+const getQuotationRevisionNo = (no) => {
+    const match = (no || "").match(/-R(\d+)$/i);
+    return match ? parseInt(match[1], 10) : 0;
+};
+
+const dedupeQuotationsByLead = (list, quotationNoKey = "quotationNo") => {
+    const latestByLead = {};
+    list.forEach(item => {
+        const groupKey = item.leadNo || getBaseQuotationNo(item[quotationNoKey]);
+        const existing = latestByLead[groupKey];
+        if (!existing || getQuotationRevisionNo(item[quotationNoKey]) > getQuotationRevisionNo(existing[quotationNoKey])) {
+            latestByLead[groupKey] = item;
+        }
+    });
+    return Object.values(latestByLead);
+};
+
+// Next Lead No. is always the highest "LD-###" seen (seed + real) plus
+// one — not a count of how many records happen to exist. A count-based
+// scheme breaks the moment any seed/dummy row is added or removed (it did:
+// removing a stale dummy lead shifted every subsequent real lead's number).
+const getNextLeadNumber = () => {
+    const allLeadNumbers = [
+        ...fmsData.map(row => row.leadNumber),
+        ...getSubmittedLeads().map(lead => lead.leadNumber)
+    ];
+    let maxSeq = 0;
+    allLeadNumbers.forEach(no => {
+        const match = (no || "").match(/^LD-(\d+)$/i);
+        if (match) {
+            const seq = parseInt(match[1], 10);
+            if (seq > maxSeq) maxSeq = seq;
+        }
+    });
+    return `LD-${String(maxSeq + 1).padStart(3, '0')}`;
 };
 
 export const mockApi = {
@@ -77,7 +189,8 @@ export const mockApi = {
                     nob: fmsMatch.nob || "",
                     city: fmsMatch.city || "",
                     division: fmsMatch.division || "",
-                    address: fmsMatch.address || ""
+                    address: fmsMatch.address || "",
+                    attachment: fmsMatch.attachment || ""
                 }
             };
         }
@@ -91,7 +204,8 @@ export const mockApi = {
                     nob: submittedMatch.nob || "",
                     city: submittedMatch.city || "",
                     division: submittedMatch.division || "",
-                    address: submittedMatch.address || ""
+                    address: submittedMatch.address || "",
+                    attachment: submittedMatch.attachment || ""
                 }
             };
         }
@@ -102,8 +216,7 @@ export const mockApi = {
     submitLead: async (leadData) => {
         await simulateDelay();
 
-        const existingLeads = getSubmittedLeads();
-        const leadNumber = `LD-${String(fmsData.length + existingLeads.length + 1).padStart(3, '0')}`;
+        const leadNumber = getNextLeadNumber();
 
         const newLead = {
             ...leadData,
@@ -118,46 +231,146 @@ export const mockApi = {
 
     generateLeadNumber: async () => {
         await simulateDelay();
-        // Find max lead number
-        // sophisticated logic could be here, but "LD-003" is fine for dummy
-        return "LD-003";
+        return getNextLeadNumber();
+    },
+
+    // Company Master's "Enquiry" button — creates a lead on the fly from an
+    // existing company's own master data (skipping the New Lead form) and
+    // hands back its auto-generated Lead No. so the caller can jump
+    // straight into the Lead Follow-Up ("Call Now") form for it.
+    createEnquiryLead: async (company, receiverName) => {
+        await simulateDelay();
+
+        const leadNumber = getNextLeadNumber();
+        const now = new Date();
+
+        const newLead = {
+            leadNumber,
+            timestamp: now.toISOString(),
+            date: now.toLocaleDateString('en-GB'),
+            receiverName: receiverName || "System",
+            source: "Company Master",
+            leadType: "Incoming",
+            salesType: "Existing Customer",
+            companyName: company.name || "",
+            phoneNumber: company.phone || "",
+            salespersonName: company.contactPersons?.[0]?.name || "",
+            location: company.city || "",
+            email: company.email || "",
+            contactPersons: company.contactPersons || [],
+            state: company.state || "",
+            city: company.city || "",
+            address: company.address || "",
+            nob: company.nob || "",
+            division: company.division || "",
+            notes: "Enquiry raised directly from Company Master.",
+            interaction: "",
+            attachment: company.proof || ""
+        };
+
+        saveSubmittedLead(newLead);
+
+        return { success: true, leadNumber };
     },
 
     // Dashboard Metrics
-    fetchDashboardMetrics: async (currentUser, isAdminFunc) => {
+    // filters: { salesPerson, division, dateFrom, dateTo } — all optional.
+    fetchDashboardMetrics: async (currentUser, isAdminFunc, filters = {}) => {
         await simulateDelay();
 
-        // Logic adapted from DashboardMetrics.jsx
         const username = currentUser?.username;
+        const isAdmin = isAdminFunc();
+        const ownedBy = (owner) => isAdmin || owner === username;
+        const resolvedLeadNumbers = getResolvedLeadNumbers();
+        const ownerMap = buildLeadOwnerMap();
 
-        const filterUser = (item) => {
-            if (isAdminFunc()) return true;
-            return item.assignedUser === username;
-        };
+        // ---- Leads (seed + real) ----
+        const seedLeads = fmsData.map(row => ({
+            owner: row.receiver || row.assignedUser || "",
+            division: row.division || "",
+            date: row.date || "",
+            isPending: !!row.hasPendingFollowUp && !resolvedLeadNumbers.includes(row.leadNumber)
+        }));
+        const realLeads = getSubmittedLeads().map(lead => ({
+            owner: lead.receiverName || "",
+            division: lead.division || "",
+            date: lead.date || "",
+            isPending: !resolvedLeadNumbers.includes(lead.leadNumber)
+        }));
+        const leads = [...seedLeads, ...realLeads].filter(l =>
+            ownedBy(l.owner) && matchesExtraFilters(l.owner, l.division, l.date, filters)
+        );
 
-        const myFms = fmsData.filter(filterUser);
-        const myQuotations = quotations.filter(filterUser);
-        const myEnquiries = enquiryTracker.filter(filterUser);
-        const myEnquiryToOrder = enquiryToOrder.filter(filterUser);
+        // ---- Quotations sent (seed + real), attributed via their lead ----
+        // A revision is the same quotation being updated, not a new one
+        // sent — dedupe to the latest revision per lead first so a
+        // revised quotation isn't counted (and its amount summed) twice.
+        const seedQuotations = quotations.map(q => ({
+            owner: q.assignedUser || "",
+            division: ownerMap[q.leadNo]?.division || "",
+            date: q.date || "",
+            amount: Number(q.total) || 0,
+            leadNo: q.leadNo || "",
+            quotationNo: q.quotationNo || ""
+        }));
+        const realQuotationsRaw = Object.values(getSavedQuotations()).map(q => ({
+            owner: ownerMap[q.leadNo]?.owner || "",
+            division: q.division || ownerMap[q.leadNo]?.division || "",
+            date: q.quotationDate || q.savedAt || "",
+            amount: Number(q.grandTotal) || 0,
+            leadNo: q.leadNo || "",
+            quotationNo: q.quotationNo || q.poNumber || ""
+        }));
+        const realQuotations = dedupeQuotationsByLead(realQuotationsRaw);
+        const allQuotations = [...seedQuotations, ...realQuotations].filter(q =>
+            ownedBy(q.owner) && matchesExtraFilters(q.owner, q.division, q.date, filters)
+        );
+        const totalQuotationAmount = allQuotations.reduce((sum, q) => sum + q.amount, 0);
+
+        // ---- Advance Received against PI ----
+        const advanceEntries = Object.values(getAdvancePayments()).map(entry => ({
+            owner: ownerMap[entry.leadNo]?.owner || "",
+            division: entry.division || ownerMap[entry.leadNo]?.division || "",
+            date: entry.date || "",
+            received: entry.receivedAdvance === "Yes",
+            amount: Number(entry.advanceAmount) || 0
+        })).filter(e => ownedBy(e.owner) && matchesExtraFilters(e.owner, e.division, e.date, filters));
+        const receivedAdvanceEntries = advanceEntries.filter(e => e.received);
+        const totalAdvanceReceived = receivedAdvanceEntries.reduce((sum, e) => sum + e.amount, 0);
+
+        // ---- Orders Received — calls actually logged as "Order Receive" ----
+        const orderHistory = getFollowUpHistory().filter(h =>
+            ownedBy(h.assignedTo) && matchesExtraFilters(h.assignedTo, h.division, h.timestamp, filters)
+        );
+        const ordersReceived = orderHistory.filter(h => h.enquiryReceivedStatus === "Order Receive").length;
 
         return {
-            totalLeads: myFms.length.toString(),
-            pendingFollowups: myFms.filter(d => d.hasPendingFollowUp).length.toString(),
-            quotationsSent: myQuotations.length.toString(),
-            ordersReceived: myEnquiries.filter(d => d.orderReceived === "Yes").length.toString(),
-            totalEnquiry: myEnquiryToOrder.length.toString(), // Approximated
-            pendingEnquiry: myEnquiryToOrder.filter(d => d.status === "Pending").length.toString()
+            totalLeads: leads.length.toString(),
+            pendingFollowups: leads.filter(l => l.isPending).length.toString(),
+            quotationsSent: allQuotations.length.toString(),
+            quotationsTotalAmount: totalQuotationAmount,
+            ordersReceived: ordersReceived.toString(),
+            advanceReceivedCount: receivedAdvanceEntries.length.toString(),
+            totalAdvanceReceived,
+            totalEnquiry: "0",
+            pendingEnquiry: "0"
         };
     },
 
-    fetchPendingTasks: async (currentUser, isAdminFunc) => {
+    fetchPendingTasks: async (currentUser, isAdminFunc, filters = {}) => {
         await simulateDelay();
-        
-        // Use existing fetchFollowUps for data
+
+        // Use existing fetchFollowUps for data (already permission-filtered)
         const followUpsData = await mockApi.fetchFollowUps(currentUser, isAdminFunc);
-        const pending = followUpsData.pending || [];
-        
-        // Format it for the PendingTasks widget
+        const pending = (followUpsData.pending || []).filter(task =>
+            matchesExtraFilters(task.assignedTo, task.division, task.createdAt, filters)
+        );
+
+        // Format it for the PendingTasks widget — "Call Now" deep-links
+        // straight into that lead's Call Tracker form, same as every other
+        // "Call Now" button in the app (Call Tracker's own Pending table,
+        // the Lead popup, etc.) instead of dropping the user on the
+        // general /follow-up list.
         return pending.slice(0, 5).map(task => ({
             id: task.id,
             type: "Follow-up",
@@ -165,22 +378,23 @@ export const mockApi = {
             reference: `Lead No: ${task.id}`,
             date: task.nextCallDate || "Today",
             actionText: "Call Now",
-            link: `/follow-up`
+            link: `/follow-up/new?leadId=${task.id}&leadNo=${task.id}`
         }));
     },
 
-    fetchRecentActivities: async (currentUser, isAdminFunc) => {
+    fetchRecentActivities: async (currentUser, isAdminFunc, filters = {}) => {
         await simulateDelay();
-        
+
         const username = currentUser?.username;
         const isAdmin = isAdminFunc();
         const checkPerm = (userAssigned) => isAdmin || (userAssigned === username);
-        
+        const ownerMap = buildLeadOwnerMap();
+
         const activities = [];
-        
+
         // 1. New Leads
         getSubmittedLeads().forEach(lead => {
-            if (checkPerm(lead.receiverName)) {
+            if (checkPerm(lead.receiverName) && matchesExtraFilters(lead.receiverName, lead.division, lead.timestamp, filters)) {
                 activities.push({
                     user: lead.receiverName || "System",
                     action: "Created a new lead",
@@ -191,10 +405,10 @@ export const mockApi = {
                 });
             }
         });
-        
+
         // 2. Follow-up History (using basic date parse for dd/mm/yyyy if needed)
         getFollowUpHistory().forEach(history => {
-            if (checkPerm(history.assignedTo)) {
+            if (checkPerm(history.assignedTo) && matchesExtraFilters(history.assignedTo, history.division, history.timestamp, filters)) {
                 let d = new Date();
                 if (history.timestamp && history.timestamp.includes('/')) {
                     const parts = history.timestamp.split('/');
@@ -210,13 +424,15 @@ export const mockApi = {
                 });
             }
         });
-        
-        // 3. Quotations
+
+        // 3. Quotations — attributed via their lead when not set directly
         const savedQuots = getSavedQuotations();
         Object.values(savedQuots).forEach(q => {
-            if (checkPerm(q.assignedUser || q.preparedBy)) {
+            const owner = q.assignedUser || q.preparedBy || ownerMap[q.leadNo]?.owner || "";
+            const division = q.division || ownerMap[q.leadNo]?.division || "";
+            if (checkPerm(owner) && matchesExtraFilters(owner, division, q.quotationDate || q.savedAt, filters)) {
                 activities.push({
-                    user: q.assignedUser || q.preparedBy || "System",
+                    user: owner || "System",
                     action: "Saved quotation",
                     type: "Quotation",
                     detail: q.companyName || q.quotationNo || "Unknown",
@@ -267,6 +483,18 @@ export const mockApi = {
         // a lead pending since it still needs a future follow-up.
         const resolvedLeadNumbers = getResolvedLeadNumbers();
 
+        // For leads whose most recent call was logged as "Expected", the
+        // Pending list should reflect that call's actual customer feedback
+        // and scheduled next action/date — not the lead's original
+        // placeholder values. History entries are appended in submission
+        // order, so the last one per lead number is the most recent.
+        const latestExpectedByLead = {};
+        getFollowUpHistory().forEach(entry => {
+            if (entry.enquiryReceivedStatus === "Expected") {
+                latestExpectedByLead[entry.leadNo] = entry;
+            }
+        });
+
         const pendingFollowUps = fmsData.filter(row => {
             // assignedUser check
             const assignedUser = row.assignedUser;
@@ -281,6 +509,9 @@ export const mockApi = {
             phoneNumber: row.phoneNumber,
             leadSource: row.source,
             leadType: row.leadType,
+            salesType: row.salesType || "",
+            interaction: row.interaction || "",
+            attachment: row.attachment || "",
             receiverName: row.receiver,
             location: row.location,
             email: row.email,
@@ -295,10 +526,15 @@ export const mockApi = {
             creditLimit: row.creditLimit,
             contactPersons: row.contactPersons || [],
             notes: row.notes,
-            customerSay: "Interested",
+            // Customer Say / Next Action / Next Call Date & Time stay blank
+            // until a real Call Tracker follow-up is logged for this lead —
+            // no seed-data fallback text.
+            customerSay: latestExpectedByLead[row.leadNumber]?.customerSay || "",
             enquiryStatus: "New",
             createdAt: row.date,
-            nextCallDate: row.followUpDate, // Mapping 'followUpDate' to 'nextCallDate'
+            nextAction: latestExpectedByLead[row.leadNumber]?.nextAction || "",
+            nextCallDate: latestExpectedByLead[row.leadNumber]?.nextCallDate || "",
+            nextCallTime: latestExpectedByLead[row.leadNumber]?.nextCallTime || "",
             priority: "High",
             assignedTo: row.assignedUser,
             itemQty: ""
@@ -314,10 +550,17 @@ export const mockApi = {
             id: lead.leadNumber,
             leadId: lead.leadNumber,
             companyName: lead.companyName,
-            personName: lead.salespersonName,
-            phoneNumber: lead.phoneNumber,
+            // Prefer the actual Contact Person Details captured on the Lead
+            // form (Person 1) — salespersonName/phoneNumber only auto-fill
+            // when an existing Company Master record is selected, so they're
+            // often blank for freshly-typed "New Customer" leads.
+            personName: lead.contactPersons?.[0]?.name || lead.salespersonName || "",
+            phoneNumber: lead.contactPersons?.[0]?.number || lead.phoneNumber || "",
             leadSource: lead.source,
             leadType: lead.leadType,
+            salesType: lead.salesType || "",
+            interaction: lead.interaction || "",
+            attachment: lead.attachment || "",
             receiverName: lead.receiverName,
             location: lead.location,
             email: lead.email,
@@ -332,10 +575,12 @@ export const mockApi = {
             creditLimit: lead.creditLimit,
             contactPersons: lead.contactPersons || [],
             notes: lead.notes,
-            customerSay: "",
+            customerSay: latestExpectedByLead[lead.leadNumber]?.customerSay || "",
             enquiryStatus: "New",
             createdAt: lead.date,
-            nextCallDate: "",
+            nextAction: latestExpectedByLead[lead.leadNumber]?.nextAction || "",
+            nextCallDate: latestExpectedByLead[lead.leadNumber]?.nextCallDate || "",
+            nextCallTime: latestExpectedByLead[lead.leadNumber]?.nextCallTime || "",
             priority: determinePriority(lead.source),
             assignedTo: lead.receiverName,
             itemQty: ""
@@ -388,9 +633,18 @@ export const mockApi = {
                     city: data.city || source.city || "",
                     division: data.division || source.division || "",
                     freightType: data.freightType || "",
-                    contactName: source.personName || source.salespersonName || "",
-                    contactNo: source.phoneNumber || "",
-                    gstin: source.gst || "",
+                    // Same Contact Person Details fallback as the Pending
+                    // Call Tracker list above.
+                    contactName: source.contactPersons?.[0]?.name || source.personName || source.salespersonName || "",
+                    contactNo: source.contactPersons?.[0]?.number || source.phoneNumber || "",
+                    // GST is now captured on the Order Details form at
+                    // Order-Receive time (the Lead form no longer collects
+                    // it) — fall back to the lead's original GST for older
+                    // leads that still have one.
+                    gstin: data.gst || source.gst || "",
+                    creditAccess: data.creditAccess || "",
+                    creditDays: data.creditDays || "",
+                    creditLimit: data.creditLimit || "",
                     // Items captured on the Call Tracker "Order Receive" form
                     // ({name, uom, quantity} each) — carried through so the
                     // Quotation page's Items & Quantities table can prefill
@@ -414,6 +668,11 @@ export const mockApi = {
             timestamp: formattedDate,
             leadNo: leadNo,
             companyName: source ? (source.company || source.companyName) : "",
+            // Carried through so the History table's Person Name / NOB
+            // filters have something real to match against, same as the
+            // Pending list.
+            personName: source ? (source.contactPersons?.[0]?.name || source.personName || source.salespersonName || "") : "",
+            nob: source ? (source.nob || "") : "",
             division: data.division || (source ? (source.division || "") : ""),
             enquiryCity: data.city || (source ? (source.city || "") : ""),
             customerSay: data.customerFeedback || "",
@@ -455,65 +714,90 @@ export const mockApi = {
         return "https://dummy-file-url.com/file";
     },
 
-    fetchDashboardAppCharts: async (currentUser, isAdminFunc) => {
+    // filters: { salesPerson, division, dateFrom, dateTo } — all optional.
+    fetchDashboardAppCharts: async (currentUser, isAdminFunc, filters = {}) => {
         await simulateDelay();
 
         const username = currentUser?.username;
         const isAdmin = isAdminFunc();
+        const ownedBy = (owner) => isAdmin || owner === username;
+        const ownerMap = buildLeadOwnerMap();
 
-        // Helper to check permission
-        const checkPerm = (row) => isAdmin || (row.assignedUser === username);
+        // ---- Combined leads (seed + real), permission + filters applied ----
+        const seedLeads = fmsData.map(row => ({
+            owner: row.receiver || row.assignedUser || "", division: row.division || "",
+            date: row.date || "", source: row.source || ""
+        }));
+        const realLeads = getSubmittedLeads().map(lead => ({
+            owner: lead.receiverName || "", division: lead.division || "",
+            date: lead.date || "", source: lead.source || ""
+        }));
+        const leads = [...seedLeads, ...realLeads].filter(l =>
+            ownedBy(l.owner) && matchesExtraFilters(l.owner, l.division, l.date, filters)
+        );
 
-        // 1. Lead Data (Monthly)
+        // ---- Combined quotations (seed + real) — deduped to the latest
+        // revision per lead, same reasoning as fetchDashboardMetrics above.
+        const seedQuotations = quotations.map(q => ({
+            owner: q.assignedUser || "", division: ownerMap[q.leadNo]?.division || "", date: q.date || "",
+            leadNo: q.leadNo || "", quotationNo: q.quotationNo || ""
+        }));
+        const realQuotationsRaw = Object.values(getSavedQuotations()).map(q => ({
+            owner: ownerMap[q.leadNo]?.owner || "",
+            division: q.division || ownerMap[q.leadNo]?.division || "",
+            date: q.quotationDate || q.savedAt || "",
+            leadNo: q.leadNo || "", quotationNo: q.quotationNo || q.poNumber || ""
+        }));
+        const realQuotations = dedupeQuotationsByLead(realQuotationsRaw);
+        const allQuotations = [...seedQuotations, ...realQuotations].filter(q =>
+            ownedBy(q.owner) && matchesExtraFilters(q.owner, q.division, q.date, filters)
+        );
+
+        // ---- Advance Received against PI ----
+        const advanceReceived = Object.values(getAdvancePayments()).filter(entry => {
+            const owner = ownerMap[entry.leadNo]?.owner || "";
+            const division = entry.division || ownerMap[entry.leadNo]?.division || "";
+            return entry.receivedAdvance === "Yes" && ownedBy(owner) && matchesExtraFilters(owner, division, entry.date, filters);
+        });
+
+        // ---- Orders — calls actually logged as "Order Receive" ----
+        const orderHistory = getFollowUpHistory().filter(h =>
+            h.enquiryReceivedStatus === "Order Receive" &&
+            ownedBy(h.assignedTo) && matchesExtraFilters(h.assignedTo, h.division, h.timestamp, filters)
+        );
+
+        // 1. Lead/Quotation/Order data (Monthly)
         const monthlyData = {};
-
-        // Leads from FMS
-        fmsData.forEach(row => {
-            if (checkPerm(row)) {
-                // Assuming date is DD/MM/YYYY
-                const parts = row.date.split('/');
-                const month = new Date(parts[2], parts[1] - 1, parts[0]).toLocaleString('en-US', { month: 'short' });
-                if (!monthlyData[month]) monthlyData[month] = { leads: 0, enquiries: 0, orders: 0 };
-                monthlyData[month].leads++;
-            }
-        });
-
-        // Orders from enquiry data
-        enquiryTracker.forEach(row => {
-            if (checkPerm(row) && row.orderReceived === "Yes") {
-                const parts = row.date.split('/');
-                const month = new Date(parts[2], parts[1] - 1, parts[0]).toLocaleString('en-US', { month: 'short' });
-                if (!monthlyData[month]) monthlyData[month] = { leads: 0, enquiries: 0, orders: 0 };
-                monthlyData[month].orders++;
-            }
-        });
+        const bumpMonth = (dateStr, key) => {
+            const date = parseFlexibleDate(dateStr);
+            if (!date) return;
+            const month = date.toLocaleString('en-US', { month: 'short' });
+            if (!monthlyData[month]) monthlyData[month] = { leads: 0, quotations: 0, orders: 0 };
+            monthlyData[month][key]++;
+        };
+        leads.forEach(l => bumpMonth(l.date, 'leads'));
+        allQuotations.forEach(q => bumpMonth(q.date, 'quotations'));
+        orderHistory.forEach(h => bumpMonth(h.timestamp, 'orders'));
 
         const leadData = Object.keys(monthlyData).map(month => ({
             month,
             leads: monthlyData[month].leads,
-            enquiries: monthlyData[month].enquiries, // simplified (0 for now)
+            quotations: monthlyData[month].quotations,
             orders: monthlyData[month].orders
         }));
 
-        // 2. Conversion Data
-        const totalLeads = fmsData.filter(checkPerm).length;
-        const totalEnquiries = enquiryTracker.filter(checkPerm).length; // Simplified
-        const totalQuotations = quotations.filter(checkPerm).length;
-        const totalOrders = enquiryTracker.filter(r => checkPerm(r) && r.orderReceived === "Yes").length;
-
+        // 2. Conversion funnel: Leads -> Quotations Sent -> Advance Received -> Orders
         const conversionData = [
-            { name: "Leads", value: totalLeads, color: "#4f46e5" },
-            { name: "Enquiries", value: totalEnquiries, color: "#8b5cf6" },
-            { name: "Quotations", value: totalQuotations, color: "#d946ef" },
-            { name: "Orders", value: totalOrders, color: "#ec4899" }
+            { name: "Leads", value: leads.length, color: "#4f46e5" },
+            { name: "Quotations", value: allQuotations.length, color: "#8b5cf6" },
+            { name: "Advance Received", value: advanceReceived.length, color: "#d946ef" },
+            { name: "Orders", value: orderHistory.length, color: "#ec4899" }
         ];
 
         // 3. Source Data
         const sourceCounter = {};
-        fmsData.forEach(row => {
-            if (checkPerm(row) && row.source) {
-                sourceCounter[row.source] = (sourceCounter[row.source] || 0) + 1;
-            }
+        leads.forEach(l => {
+            if (l.source) sourceCounter[l.source] = (sourceCounter[l.source] || 0) + 1;
         });
 
         const sourceData = Object.keys(sourceCounter).map((name, index) => ({
@@ -617,6 +901,15 @@ export const mockApi = {
         await simulateDelay();
         console.log(`Mock ${action} quotation:`, data);
 
+        // Without a quotation number there's nowhere to save this under —
+        // fail loudly instead of silently no-op'ing while still reporting
+        // success (which previously let a save look like it worked, show a
+        // "saved successfully" toast, and reset the form, while nothing
+        // actually landed in History).
+        if (action === "save" && !data.quotationNo) {
+            return { success: false, error: "Missing quotation/PO number — please wait for it to finish generating and try again." };
+        }
+
         // A real "Save Quotation" (not the "Send"/link-share action) persists
         // the full quotation — so it shows up in the History tab and can be
         // reloaded for Revise/Preview — and registers or refreshes this
@@ -624,8 +917,10 @@ export const mockApi = {
         // resolution status/remarks are preserved across re-saves (e.g.
         // revisions) rather than being wiped back to "pending".
         if (action === "save" && data.quotationNo) {
+            // Strip out pdfDataUri to avoid blowing up the 5MB localStorage limit
+            const { pdfDataUri, ...dataToSave } = data;
             saveSavedQuotation(data.quotationNo, {
-                ...data,
+                ...dataToSave,
                 savedAt: new Date().toISOString()
             });
 
@@ -643,6 +938,7 @@ export const mockApi = {
                 freightType: data.freightType || "",
                 advancePayment: data.advancePayment || "No",
                 advanceAmount: data.advanceAmount || "",
+                grandTotal: data.grandTotal || 0,
                 receivedAdvance: existing.receivedAdvance || "",
                 status: existing.status || "",
                 remarks: existing.remarks || ""
@@ -789,16 +1085,40 @@ export const mockApi = {
         await simulateDelay();
 
         const savedQuotations = getSavedQuotations();
-        // Join in the quotation's stored PDF (a data: URI) so Pending/History
-        // rows here can offer a "View PDF" action without duplicating the
-        // PDF data into the advance-payment entry itself.
-        const entries = Object.values(getAdvancePayments()).map(entry => ({
+        const entries = Object.values(getAdvancePayments())
+            .filter(entry => !!savedQuotations[entry.quotationNo])
+            .map(entry => ({
             ...entry,
-            pdfUrl: savedQuotations[entry.quotationNo]?.pdfUrl || ""
+            pdfUrl: savedQuotations[entry.quotationNo]?.pdfUrl || "",
+            // Provide the full quotation data instead of a massive PDF string
+            // so Advance Payment can regenerate it on the fly.
+            quotationData: savedQuotations[entry.quotationNo] || null,
+            // Fallback for entries saved before grandTotal was tracked here.
+            grandTotal: entry.grandTotal || savedQuotations[entry.quotationNo]?.grandTotal || 0
         }));
 
-        const pending = entries.filter(e => !e.status || e.status === "Hold");
+        const pendingRaw = entries.filter(e => !e.status || e.status === "Hold");
         const history = entries.filter(e => e.status === "Sent to Order" || e.status === "Not Sent to Order");
+
+        // A revised quotation ("...-001-R1") gets its own tracking entry
+        // alongside the one it revised — only the latest revision for a
+        // given lead should stay actionable in Pending, so earlier
+        // revisions of the same quotation don't show up twice.
+        const getBaseNo = (no) => (no || "").replace(/-R\d+$/i, "");
+        const getRevisionNo = (no) => {
+            const match = (no || "").match(/-R(\d+)$/i);
+            return match ? parseInt(match[1], 10) : 0;
+        };
+
+        const latestByLead = {};
+        pendingRaw.forEach(entry => {
+            const groupKey = entry.leadNo || getBaseNo(entry.quotationNo);
+            const existing = latestByLead[groupKey];
+            if (!existing || getRevisionNo(entry.quotationNo) > getRevisionNo(existing.quotationNo)) {
+                latestByLead[groupKey] = entry;
+            }
+        });
+        const pending = Object.values(latestByLead);
 
         // Newest first
         return {

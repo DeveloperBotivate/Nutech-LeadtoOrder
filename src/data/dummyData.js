@@ -55,6 +55,8 @@ export const fmsData = [
         receiver: "Shadab",
         source: "Indiamart",
         leadType: "Incoming",
+        salesType: "Existing Customer",
+        interaction: "Call",
         company: "ABC Corp",
         personName: "Rohit Verma",
         phoneNumber: "9876543210",
@@ -71,50 +73,20 @@ export const fmsData = [
         creditLimit: "1,00,000",
         contactPersons: [{ name: "Rohit Verma", designation: "Purchase Manager", number: "9876543210" }],
         notes: "Interested in bulk order for Q1.",
+        attachment: "data:text/plain;base64,U2FtcGxlIGF0dGFjaG1lbnQgb24gZmlsZSBmb3IgbGVhZCBMRC0wMDEu",
         assignedUser: "Shadab",
         status: "Pending", // Example status
-        followUpDate: "05/12/2024",
         hasPendingFollowUp: true
-    },
-    {
-        date: "02/12/2024",
-        leadNumber: "LD-002",
-        receiver: "Sajit",
-        source: "Website",
-        leadType: "Outgoing",
-        company: "XYZ Pvt Ltd",
-        personName: "Neha Kapoor",
-        phoneNumber: "8765432109",
-        email: "neha@xyz.com",
-        location: "Delhi",
-        state: "Delhi",
-        city: "Delhi",
-        address: "456, Okhla Phase 3, Delhi",
-        gst: "07VWXYZ1234F1Z5",
-        nob: "Trading",
-        division: "Operations",
-        creditAccess: "No",
-        creditDays: "",
-        creditLimit: "",
-        contactPersons: [{ name: "Neha Kapoor", designation: "Director", number: "8765432109" }],
-        notes: "Follow up after festive season.",
-        assignedUser: "Sajit",
-        status: "Completed",
-        followUpDate: "",
-        hasPendingFollowUp: false
     }
 ];
 
-export const quotations = [
-    {
-        date: "03/12/2024",
-        quotationNo: "NBD-001",
-        assignedUser: "Shadab",
-        companyName: "ABC Corp",
-        total: 50000,
-        items: []
-    }
-];
+// Emptied — this used to hold a fabricated seed quotation ("NBD-001")
+// that never existed in the real Quotation flow (it wasn't a saved
+// quotation, had no items/PDF, and never appeared in the Quotation page's
+// own History tab), yet was still being counted into the Dashboard's
+// "Quotations Sent" total. Real quotations now come entirely from
+// getSavedQuotations() in storageManager.js.
+export const quotations = [];
 
 export const enquiryTracker = [
     {

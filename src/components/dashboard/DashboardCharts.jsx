@@ -21,18 +21,18 @@ import {
 
 // Fallback data in case of errors
 const fallbackLeadData = [
-  { month: "Jan", leads: 45, enquiries: 30, orders: 12 },
-  { month: "Feb", leads: 52, enquiries: 35, orders: 15 },
-  { month: "Mar", leads: 48, enquiries: 32, orders: 14 },
-  { month: "Apr", leads: 70, enquiries: 45, orders: 20 },
-  { month: "May", leads: 65, enquiries: 40, orders: 18 },
-  { month: "Jun", leads: 58, enquiries: 38, orders: 16 },
+  { month: "Jan", leads: 45, quotations: 30, orders: 12 },
+  { month: "Feb", leads: 52, quotations: 35, orders: 15 },
+  { month: "Mar", leads: 48, quotations: 32, orders: 14 },
+  { month: "Apr", leads: 70, quotations: 45, orders: 20 },
+  { month: "May", leads: 65, quotations: 40, orders: 18 },
+  { month: "Jun", leads: 58, quotations: 38, orders: 16 },
 ]
 
 const fallbackConversionData = [
   { name: "Leads", value: 124, color: "#0284c7" },
-  { name: "Enquiries", value: 82, color: "#0ea5e9" },
-  { name: "Quotations", value: 56, color: "#38bdf8" },
+  { name: "Quotations", value: 82, color: "#0ea5e9" },
+  { name: "Advance Received", value: 56, color: "#38bdf8" },
   { name: "Orders", value: 27, color: "#7dd3fc" },
 ]
 
@@ -44,7 +44,7 @@ const fallbackSourceData = [
   { name: "Referrals", value: 12, color: "#bae6fd" },
 ]
 
-function DashboardCharts() {
+function DashboardCharts({ filters }) {
   const { currentUser, userType, isAdmin } = useContext(AuthContext) // Get user info and admin function
   const [activeTab, setActiveTab] = useState("overview")
   const [leadData, setLeadData] = useState(fallbackLeadData)
@@ -58,11 +58,11 @@ function DashboardCharts() {
       try {
         setIsLoading(true)
 
-        const { leadData, conversionData, sourceData } = await mockApi.fetchDashboardAppCharts(currentUser, isAdmin);
+        const { leadData, conversionData, sourceData } = await mockApi.fetchDashboardAppCharts(currentUser, isAdmin, filters);
 
-        if (leadData.length > 0) setLeadData(leadData);
-        if (conversionData.length > 0) setConversionData(conversionData);
-        if (sourceData.length > 0) setSourceData(sourceData);
+        setLeadData(leadData || []);
+        setConversionData(conversionData || []);
+        setSourceData(sourceData || []);
 
       } catch (error) {
         console.error("Error fetching chart data:", error)
@@ -74,7 +74,7 @@ function DashboardCharts() {
     }
 
     fetchData()
-  }, [currentUser, isAdmin])
+  }, [currentUser, isAdmin, filters])
 
 
 
@@ -131,7 +131,7 @@ function DashboardCharts() {
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="leads" name="Leads" fill="#0ea5e9" />
-                <Bar dataKey="enquiries" name="Enquiries" fill="#38bdf8" />
+                <Bar dataKey="quotations" name="Quotations" fill="#38bdf8" />
                 <Bar dataKey="orders" name="Orders" fill="#0284c7" />
               </BarChart>
             </ResponsiveContainer>

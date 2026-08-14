@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Edit, Trash2, Plus, Minus, Paperclip, Check, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Edit, Trash2, Plus, Minus, Paperclip, Check, X, PhoneOutgoing } from 'lucide-react';
 import { getCompanies, saveCompanies, saveCompany, getNOBs } from '../../utils/storageManager';
 import { generateId, fileToBase64 } from '../../utils/helpers';
+import { mockApi } from '../../services/mockApi';
+import { AuthContext } from '../../App';
 import DataTable from '../../components/DataTable';
 import ModalAlert from '../../components/ModalAlert';
 import ModalForm from '../../components/ModalForm';
@@ -25,6 +28,8 @@ const emptyFormData = () => ({
 });
 
 export default function Company({ searchQuery, triggerAdd }) {
+  const navigate = useNavigate();
+  const { currentUser } = useContext(AuthContext);
   const [companies, setCompanies] = useState([]);
   const [nobOptions, setNobOptions] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -130,6 +135,12 @@ export default function Company({ searchQuery, triggerAdd }) {
     });
   };
 
+  // Navigate straight to the Follow-Up form with the company's data passed in state.
+  // The lead will only be created and saved when the user submits the Follow-Up form.
+  const handleEnquiry = (company) => {
+    navigate('/follow-up/new', { state: { companyContext: company } });
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
     const cleanContacts = formData.contactPersons.filter(p => p.name.trim() || p.designation.trim() || p.number.trim());
@@ -169,7 +180,13 @@ export default function Company({ searchQuery, triggerAdd }) {
     return (
       <tr key={item.id} className="hover:bg-gray-50 transition-colors text-center text-sm">
         <td className="px-4 py-3 whitespace-nowrap">
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() => handleEnquiry(item)}
+              className="flex items-center gap-1 px-2 py-1 text-xs border border-emerald-200 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors whitespace-nowrap"
+            >
+              <PhoneOutgoing size={12} /> Enquiry
+            </button>
             <button onClick={() => handleEdit(item)} className="text-indigo-600 hover:text-indigo-800"><Edit size={16} /></button>
             <button onClick={() => handleDelete(item.id)} className="text-red-500 hover:text-red-700"><Trash2 size={16} /></button>
           </div>
@@ -227,6 +244,7 @@ export default function Company({ searchQuery, triggerAdd }) {
                 <img src={item.proof} alt="Proof" className="w-9 h-9 object-cover rounded border border-gray-200" />
               </a>
             )}
+            <button onClick={() => handleEnquiry(item)} className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl" title="Raise Enquiry"><PhoneOutgoing size={16}/></button>
             <button onClick={() => handleEdit(item)} className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl"><Edit size={16}/></button>
             <button onClick={() => handleDelete(item.id)} className="p-2.5 bg-red-50 text-red-500 rounded-xl"><Trash2 size={16}/></button>
           </div>

@@ -4,7 +4,9 @@ import { useState, useEffect, useContext } from "react"
 import { AuthContext } from "../App"
 import { mockApi } from "../services/mockApi"
 import DataTable from "../components/DataTable"
-import { SearchIcon } from "../components/Icons"
+import { SearchIcon, DownloadIcon } from "../components/Icons"
+import nutechLogo from "../assests/Nutechlogo.png"
+import { buildQuotationPdf } from "./Quotation/Quotation"
 
 const fadeIn = "animate-in fade-in duration-300"
 const slideIn = "animate-in slide-in-from-right duration-300"
@@ -20,6 +22,89 @@ function AdvancePayment() {
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(15)
 
+  // Company / Division filters — shared across Pending and History, option
+  // lists sourced from whichever tab's data is currently active.
+  const [companyFilter, setCompanyFilter] = useState("all")
+  const [divisionFilter, setDivisionFilter] = useState("all")
+  const [showColumnDropdown, setShowColumnDropdown] = useState(false)
+
+  // Column visibility — Actions/Quotation No. always shown as anchors, the
+  // rest toggleable. All columns visible by default.
+  const [pendingVisibleColumns, setPendingVisibleColumns] = useState({
+    leadNo: true,
+    companyName: true,
+    division: true,
+    date: true,
+    freightType: true,
+    totalAmount: true,
+    advancePayment: true,
+    advanceAmount: true,
+    status: true,
+    quotation: true,
+  })
+  const [historyVisibleColumns, setHistoryVisibleColumns] = useState({
+    updated: true,
+    leadNo: true,
+    companyName: true,
+    division: true,
+    advanceAmount: true,
+    receivedAdvance: true,
+    status: true,
+    remarks: true,
+  })
+
+  const pendingColumnOptions = [
+    { key: "leadNo", label: "Lead No." },
+    { key: "companyName", label: "Company Name" },
+    { key: "division", label: "Division" },
+    { key: "date", label: "Date" },
+    { key: "freightType", label: "Freight Type" },
+    { key: "totalAmount", label: "Total Amount" },
+    { key: "advancePayment", label: "Advance Payment" },
+    { key: "advanceAmount", label: "Advance Amount" },
+    { key: "status", label: "Status" },
+    { key: "quotation", label: "Quotation" },
+  ]
+
+  const historyColumnOptions = [
+    { key: "updated", label: "Updated" },
+    { key: "leadNo", label: "Lead No." },
+    { key: "companyName", label: "Company Name" },
+    { key: "division", label: "Division" },
+    { key: "advanceAmount", label: "Advance Amount" },
+    { key: "receivedAdvance", label: "Received Advance" },
+    { key: "status", label: "Status" },
+    { key: "remarks", label: "Remarks" },
+  ]
+
+  const handlePendingColumnToggle = (columnKey) => {
+    setPendingVisibleColumns((prev) => ({ ...prev, [columnKey]: !prev[columnKey] }))
+  }
+
+  const handlePendingSelectAll = () => {
+    const allSelected = Object.values(pendingVisibleColumns).every(Boolean)
+    setPendingVisibleColumns(Object.fromEntries(Object.keys(pendingVisibleColumns).map((key) => [key, !allSelected])))
+  }
+
+  const handleHistoryColumnToggle = (columnKey) => {
+    setHistoryVisibleColumns((prev) => ({ ...prev, [columnKey]: !prev[columnKey] }))
+  }
+
+  const handleHistorySelectAll = () => {
+    const allSelected = Object.values(historyVisibleColumns).every(Boolean)
+    setHistoryVisibleColumns(Object.fromEntries(Object.keys(historyVisibleColumns).map((key) => [key, !allSelected])))
+  }
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showColumnDropdown && !event.target.closest(".relative")) {
+        setShowColumnDropdown(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [showColumnDropdown])
+
   const [showPopup, setShowPopup] = useState(false)
   const [selectedEntry, setSelectedEntry] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -29,6 +114,21 @@ function AdvancePayment() {
   const [receivedAdvance, setReceivedAdvance] = useState("")
   const [status, setStatus] = useState("")
   const [remarks, setRemarks] = useState("")
+
+  const [logoDataUri, setLogoDataUri] = useState("")
+
+  useEffect(() => {
+    fetch(nutechLogo)
+      .then((res) => res.blob())
+      .then((blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      }))
+      .then(setLogoDataUri)
+      .catch((error) => console.error("Error loading logo for PDF:", error))
+  }, [])
 
   const fetchData = async () => {
     try {
@@ -49,8 +149,28 @@ function AdvancePayment() {
     fetchData()
   }, [])
 
+  // Opens the quotation's saved PDF dynamically by rebuilding it from the
+  // quotation data, avoiding massive data URI bloat in localStorage.
+  const handleViewQuotation = (entry) => {
+    if (!entry.quotationData) {
+      showNotification("Quotation details are not available to generate PDF.", "error")
+      return
+    }
+    try {
+      const doc = buildQuotationPdf(entry.quotationData, logoDataUri)
+      doc.save(`Quotation_${(entry.quotationNo || "quotation").replace(/\//g, "-")}.pdf`)
+    } catch (error) {
+      console.error("Error generating PDF:", error)
+      showNotification("Failed to generate PDF", "error")
+    }
+  }
+
   useEffect(() => {
+    // Company/Division filter options are sourced from whichever tab's
+    // dataset is active, so reset the selections on every tab switch.
     setCurrentPage(1)
+    setCompanyFilter("all")
+    setDivisionFilter("all")
   }, [activeTab])
 
   const openPopup = (entry) => {
@@ -104,8 +224,11 @@ function AdvancePayment() {
     )
   }
 
-  const filteredPending = pendingEntries.filter(matchesSearch)
-  const filteredHistory = historyEntries.filter(matchesSearch)
+  const matchesCompanyFilter = (entry) => companyFilter === "all" || entry.companyName === companyFilter
+  const matchesDivisionFilter = (entry) => divisionFilter === "all" || entry.division === divisionFilter
+
+  const filteredPending = pendingEntries.filter((e) => matchesSearch(e) && matchesCompanyFilter(e) && matchesDivisionFilter(e))
+  const filteredHistory = historyEntries.filter((e) => matchesSearch(e) && matchesCompanyFilter(e) && matchesDivisionFilter(e))
 
   const pendingTotalPages = Math.ceil(filteredPending.length / itemsPerPage)
   const paginatedPending = filteredPending.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
@@ -114,8 +237,8 @@ function AdvancePayment() {
   const paginatedHistory = filteredHistory.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
 
   const pendingHeaders = [
-    "Actions", "Quotation No.", "Company Name", "Division", "Date",
-    "Freight Type", "Advance Payment", "Advance Amount", "Status"
+    "Actions", "Quotation No.",
+    ...pendingColumnOptions.filter((opt) => pendingVisibleColumns[opt.key]).map((opt) => opt.label)
   ]
 
   const renderPendingRow = (entry, index) => (
@@ -131,21 +254,53 @@ function AdvancePayment() {
         </div>
       </td>
       <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{entry.quotationNo}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[120px] sm:max-w-[150px] truncate" title={entry.companyName}>{entry.companyName}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[100px] sm:max-w-[120px] truncate" title={entry.division}>{entry.division || "-"}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.date || "-"}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.freightType || "-"}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.advancePayment || "No"}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.advanceAmount || "-"}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4">
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${entry.status === "Hold" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-800"}`}>
-          {entry.status === "Hold" ? "On Hold" : "Pending Review"}
-        </span>
-      </td>
+      {pendingVisibleColumns.leadNo && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.leadNo || "-"}</td>
+      )}
+      {pendingVisibleColumns.companyName && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+          <div className="max-w-[120px] sm:max-w-[150px] truncate" title={entry.companyName}>{entry.companyName}</div>
+        </td>
+      )}
+      {pendingVisibleColumns.division && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+          <div className="max-w-[100px] sm:max-w-[120px] truncate" title={entry.division}>{entry.division || "-"}</div>
+        </td>
+      )}
+      {pendingVisibleColumns.date && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.date || "-"}</td>
+      )}
+      {pendingVisibleColumns.freightType && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.freightType || "-"}</td>
+      )}
+      {pendingVisibleColumns.totalAmount && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm font-medium text-gray-900 whitespace-nowrap">
+          {Number(entry.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+        </td>
+      )}
+      {pendingVisibleColumns.advancePayment && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.advancePayment || "No"}</td>
+      )}
+      {pendingVisibleColumns.advanceAmount && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.advanceAmount || "-"}</td>
+      )}
+      {pendingVisibleColumns.status && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4">
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${entry.status === "Hold" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-800"}`}>
+            {entry.status === "Hold" ? "On Hold" : "Pending Review"}
+          </span>
+        </td>
+      )}
+      {pendingVisibleColumns.quotation && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4">
+          <button
+            onClick={() => handleViewQuotation(entry)}
+            className="inline-flex items-center px-2.5 py-1 text-xs border border-sky-200 text-sky-600 hover:bg-sky-50 rounded-md whitespace-nowrap"
+          >
+            <DownloadIcon className="h-3.5 w-3.5 mr-1" /> View Quotation
+          </button>
+        </td>
+      )}
     </tr>
   )
 
@@ -162,10 +317,14 @@ function AdvancePayment() {
             </span>
           </div>
           <h3 className="font-bold text-gray-900 text-lg">{entry.companyName}</h3>
-          <p className="text-sm text-gray-600">{entry.division || "-"}</p>
+          <p className="text-sm text-gray-600">Lead {entry.leadNo || "-"} • {entry.division || "-"}</p>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <p className="text-xs text-gray-500">Total Amount</p>
+          <p className="font-medium">{Number(entry.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+        </div>
         <div>
           <p className="text-xs text-gray-500">Advance Payment</p>
           <p className="font-medium">{entry.advancePayment || "No"}</p>
@@ -195,8 +354,8 @@ function AdvancePayment() {
   )
 
   const historyHeaders = [
-    "Updated", "Quotation No.", "Company Name", "Division", "Advance Amount",
-    "Received Advance", "Status", "Remarks"
+    "Quotation No.",
+    ...historyColumnOptions.filter((opt) => historyVisibleColumns[opt.key]).map((opt) => opt.label)
   ]
 
   const formatHistoryDate = (isoString) => {
@@ -211,24 +370,41 @@ function AdvancePayment() {
 
   const renderHistoryRow = (entry, index) => (
     <tr key={`${entry.quotationNo}-${index}`} className="hover:bg-slate-50 transition-colors">
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{formatHistoryDate(entry.updatedAt)}</td>
       <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{entry.quotationNo}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[120px] sm:max-w-[150px] truncate" title={entry.companyName}>{entry.companyName}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[100px] sm:max-w-[120px] truncate" title={entry.division}>{entry.division || "-"}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.advanceAmount || "-"}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.receivedAdvance || "-"}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4">
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${entry.status === "Sent to Order" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
-          {entry.status}
-        </span>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[150px] sm:max-w-[200px] truncate" title={entry.remarks}>{entry.remarks || "-"}</div>
-      </td>
+      {historyVisibleColumns.updated && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{formatHistoryDate(entry.updatedAt)}</td>
+      )}
+      {historyVisibleColumns.leadNo && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.leadNo || "-"}</td>
+      )}
+      {historyVisibleColumns.companyName && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+          <div className="max-w-[120px] sm:max-w-[150px] truncate" title={entry.companyName}>{entry.companyName}</div>
+        </td>
+      )}
+      {historyVisibleColumns.division && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+          <div className="max-w-[100px] sm:max-w-[120px] truncate" title={entry.division}>{entry.division || "-"}</div>
+        </td>
+      )}
+      {historyVisibleColumns.advanceAmount && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.advanceAmount || "-"}</td>
+      )}
+      {historyVisibleColumns.receivedAdvance && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{entry.receivedAdvance || "-"}</td>
+      )}
+      {historyVisibleColumns.status && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4">
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${entry.status === "Sent to Order" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+            {entry.status}
+          </span>
+        </td>
+      )}
+      {historyVisibleColumns.remarks && (
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+          <div className="max-w-[150px] sm:max-w-[200px] truncate" title={entry.remarks}>{entry.remarks || "-"}</div>
+        </td>
+      )}
     </tr>
   )
 
@@ -239,6 +415,7 @@ function AdvancePayment() {
           <span className="text-xs font-semibold text-gray-500">{formatHistoryDate(entry.updatedAt)}</span>
           <h3 className="font-bold text-gray-900">{entry.companyName}</h3>
           <p className="text-xs text-blue-600 font-medium">{entry.quotationNo}</p>
+          <p className="text-xs text-gray-500">Lead {entry.leadNo || "-"}</p>
         </div>
         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${entry.status === "Sent to Order" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
           {entry.status}
@@ -289,15 +466,124 @@ function AdvancePayment() {
             </div>
           </div>
 
-          <div className="relative w-full lg:w-auto lg:min-w-[250px]">
-            <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
-            <input
-              type="search"
-              placeholder="Search Quotation No. / Company..."
-              className="pl-8 w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+          {/* Mobile: Stack filters vertically, Desktop: Horizontal */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-row gap-2 lg:gap-3">
+            {(() => {
+              const filterSource = activeTab === "pending" ? pendingEntries : historyEntries
+              return (
+                <>
+                  {/* Company Name Filter */}
+                  <div className="min-w-0">
+                    <select
+                      value={companyFilter}
+                      onChange={(e) => setCompanyFilter(e.target.value)}
+                      className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                    >
+                      <option value="all">All Companies</option>
+                      {Array.from(new Set(filterSource.map((item) => item.companyName)))
+                        .filter(Boolean)
+                        .map((company) => (
+                          <option key={company} value={company}>{company}</option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* Division Filter */}
+                  <div className="min-w-0">
+                    <select
+                      value={divisionFilter}
+                      onChange={(e) => setDivisionFilter(e.target.value)}
+                      className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                    >
+                      <option value="all">All Divisions</option>
+                      {Array.from(new Set(filterSource.map((item) => item.division)))
+                        .filter(Boolean)
+                        .map((division) => (
+                          <option key={division} value={division}>{division}</option>
+                        ))}
+                    </select>
+                  </div>
+                </>
+              )
+            })()}
+
+            {/* Column Selection Dropdown */}
+            {(() => {
+              const isPendingTab = activeTab === "pending"
+              const activeColumnOptions = isPendingTab ? pendingColumnOptions : historyColumnOptions
+              const activeVisibleColumns = isPendingTab ? pendingVisibleColumns : historyVisibleColumns
+              const activeColumnToggle = isPendingTab ? handlePendingColumnToggle : handleHistoryColumnToggle
+              const activeSelectAll = isPendingTab ? handlePendingSelectAll : handleHistorySelectAll
+
+              return (
+                <div className="min-w-0 relative">
+                  <button
+                    onClick={() => setShowColumnDropdown(!showColumnDropdown)}
+                    className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white flex items-center justify-between gap-2"
+                  >
+                    <span>Select Columns</span>
+                    <svg
+                      className={`w-4 h-4 transition-transform ${showColumnDropdown ? "rotate-180" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  {showColumnDropdown && (
+                    <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-80 overflow-y-auto">
+                      <div className="p-2">
+                        <div className="flex items-center p-2 hover:bg-gray-50 rounded">
+                          <input
+                            type="checkbox"
+                            id="select-all-adv"
+                            checked={Object.values(activeVisibleColumns).every(Boolean)}
+                            onChange={activeSelectAll}
+                            className="h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                          />
+                          <label htmlFor="select-all-adv" className="ml-2 text-sm font-medium text-gray-900 cursor-pointer">
+                            All Columns
+                          </label>
+                        </div>
+
+                        <hr className="my-2" />
+
+                        {activeColumnOptions.map((option) => (
+                          <div key={option.key} className="flex items-center p-2 hover:bg-gray-50 rounded">
+                            <input
+                              type="checkbox"
+                              id={`adv-column-${option.key}`}
+                              checked={activeVisibleColumns[option.key]}
+                              onChange={() => activeColumnToggle(option.key)}
+                              className="h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                            />
+                            <label
+                              htmlFor={`adv-column-${option.key}`}
+                              className="ml-2 text-sm text-gray-700 cursor-pointer flex-1"
+                            >
+                              {option.label}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            <div className="relative w-full lg:w-auto lg:min-w-[250px]">
+              <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
+              <input
+                type="search"
+                placeholder="Search Quotation No. / Company..."
+                className="pl-8 w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -377,48 +663,32 @@ function AdvancePayment() {
                     <p className="text-xs font-medium text-gray-500">Division</p>
                     <p className="text-sm font-semibold break-words">{selectedEntry?.division || "-"}</p>
                   </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-gray-500">Total Amount</p>
+                    <p className="text-sm font-semibold break-words">
+                      {Number(selectedEntry?.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-gray-500">Advance Amount Required</p>
+                    <p className="text-sm font-semibold break-words">
+                      {selectedEntry?.advanceAmount ? Number(selectedEntry.advanceAmount).toLocaleString("en-IN", { minimumFractionDigits: 2 }) : "-"}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  <label htmlFor="advanceAmount" className="block text-sm font-medium text-gray-700">
-                    Advance Amount
+                  <label htmlFor="receivedAdvance" className="block text-sm font-medium text-gray-700">
+                    Received Advance Amount
                   </label>
                   <input
-                    id="advanceAmount"
+                    id="receivedAdvance"
                     type="number"
-                    value={advanceAmount}
-                    onChange={(e) => setAdvanceAmount(e.target.value)}
+                    value={receivedAdvance}
+                    onChange={(e) => setReceivedAdvance(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500"
-                    placeholder="Enter advance amount"
+                    placeholder="Enter received amount"
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="block text-sm font-medium text-gray-700">Received Advance Amount</label>
-                  <div className="flex items-center space-x-4">
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        name="receivedAdvance"
-                        value="Yes"
-                        checked={receivedAdvance === "Yes"}
-                        onChange={() => setReceivedAdvance("Yes")}
-                        className="h-4 w-4 text-sky-600 focus:ring-sky-500"
-                      />
-                      <span className="text-sm text-gray-700">Yes</span>
-                    </label>
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        name="receivedAdvance"
-                        value="No"
-                        checked={receivedAdvance === "No"}
-                        onChange={() => setReceivedAdvance("No")}
-                        className="h-4 w-4 text-sky-600 focus:ring-sky-500"
-                      />
-                      <span className="text-sm text-gray-700">No</span>
-                    </label>
-                  </div>
                 </div>
 
                 <div className="space-y-2">

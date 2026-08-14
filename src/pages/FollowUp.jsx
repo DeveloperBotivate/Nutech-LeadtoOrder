@@ -25,7 +25,7 @@ function FollowUp() {
   const [selectedFollowUp, setSelectedFollowUp] = useState(null)
   const [companyFilter, setCompanyFilter] = useState("all")
   const [personFilter, setPersonFilter] = useState("all")
-  const [phoneFilter, setPhoneFilter] = useState("all")
+  const [nobFilter, setNobFilter] = useState("all")
   const [visibleColumns, setVisibleColumns] = useState({
     timestamp: true,
     leadNo: true,
@@ -51,9 +51,31 @@ function FollowUp() {
     item5: true,
     qty5: true,
     nextAction: true,
-    callDate: true,
-    callTime: true,
+    nextCallDateTime: true,
     itemQty: true, // Add this line
+  })
+  // Column visibility for the Pending table — all columns shown by default.
+  const [pendingVisibleColumns, setPendingVisibleColumns] = useState({
+    salesPersonName: true,
+    salesType: true,
+    interaction: true,
+    leadSource: true,
+    leadType: true,
+    companyName: true,
+    division: true,
+    nob: true,
+    email: true,
+    state: true,
+    city: true,
+    address: true,
+    contactPersonName: true,
+    designation: true,
+    phoneNumber: true,
+    customerSay: true,
+    nextAction: true,
+    nextCallDateTime: true,
+    notes: true,
+    attachment: true,
   })
   const [showColumnDropdown, setShowColumnDropdown] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
@@ -206,6 +228,21 @@ function FollowUp() {
     }
   }
 
+  // Combines the separate Next Call Date/Time fields into a single readable
+  // value for display, e.g. "15/08/2026, 02:30 PM".
+  const formatNextCallDateTime = (nextCallDate, nextCallTime) => {
+    if (!nextCallDate && !nextCallTime) return "-"
+    if (!nextCallTime) return nextCallDate
+
+    const [hourStr, minuteStr] = nextCallTime.split(":")
+    const hour = parseInt(hourStr, 10)
+    const period = hour >= 12 ? "PM" : "AM"
+    const hour12 = ((hour + 11) % 12) + 1
+    const formattedTime = `${String(hour12).padStart(2, "0")}:${minuteStr} ${period}`
+
+    return nextCallDate ? `${nextCallDate}, ${formattedTime}` : formattedTime
+  }
+
   // Helper function to check date filter condition
   // Helper function to check date filter condition
   const checkDateFilter = (followUp, filterType) => {
@@ -344,9 +381,8 @@ function FollowUp() {
     // Apply person filter
     const matchesPersonFilter = personFilter === "all" || followUp.personName === personFilter
 
-    // Apply phone filter
-    const phoneToCompare = followUp.phoneNumber ? followUp.phoneNumber.toString().trim() : ""
-    const matchesPhoneFilter = phoneFilter === "all" || phoneToCompare === phoneFilter.toString().trim()
+    // Apply NOB filter
+    const matchesNobFilter = nobFilter === "all" || followUp.nob === nobFilter
 
     return (
       matchesSearch &&
@@ -354,18 +390,19 @@ function FollowUp() {
       matchesDateFilter &&
       matchesCompanyFilter &&
       matchesPersonFilter &&
-      matchesPhoneFilter
+      matchesNobFilter
     )
   })
 
   useEffect(() => {
-    // Reset specific filters when switching tabs
+    // Company/Person/NOB filter options are sourced from whichever tab's
+    // dataset is active, so reset the selections on every tab switch —
+    // otherwise a value picked in one tab could silently not match anything
+    // in the other.
     setCurrentPage(1)
-    if (activeTab !== "pending") {
-      setCompanyFilter("all")
-      setPersonFilter("all")
-      setPhoneFilter("all")
-    }
+    setCompanyFilter("all")
+    setPersonFilter("all")
+    setNobFilter("all")
   }, [activeTab])
 
   const filteredHistoryFollowUps = historyFollowUps.filter((followUp) => {
@@ -430,7 +467,12 @@ function FollowUp() {
       }
     })()
 
-    return matchesSearch && matchesFilterType && matchesDateFilter
+    // Apply company / person / NOB filters
+    const matchesCompanyFilter = companyFilter === "all" || followUp.companyName === companyFilter
+    const matchesPersonFilter = personFilter === "all" || followUp.personName === personFilter
+    const matchesNobFilter = nobFilter === "all" || followUp.nob === nobFilter
+
+    return matchesSearch && matchesFilterType && matchesDateFilter && matchesCompanyFilter && matchesPersonFilter && matchesNobFilter
   })
 
   // Add this function inside your FollowUp component
@@ -495,12 +537,50 @@ function FollowUp() {
     setVisibleColumns(newState)
   }
 
+  const handlePendingColumnToggle = (columnKey) => {
+    setPendingVisibleColumns((prev) => ({
+      ...prev,
+      [columnKey]: !prev[columnKey],
+    }))
+  }
+
+  const handlePendingSelectAll = () => {
+    const allSelected = Object.values(pendingVisibleColumns).every(Boolean)
+    const newState = Object.fromEntries(Object.keys(pendingVisibleColumns).map((key) => [key, !allSelected]))
+    setPendingVisibleColumns(newState)
+  }
+
+  const pendingColumnOptions = [
+    { key: "salesPersonName", label: "Sales Person Name" },
+    { key: "salesType", label: "Sales Type" },
+    { key: "interaction", label: "Interaction" },
+    { key: "leadSource", label: "Lead Source" },
+    { key: "leadType", label: "Lead Type" },
+    { key: "companyName", label: "Company Name" },
+    { key: "division", label: "Division" },
+    { key: "nob", label: "NOB" },
+    { key: "email", label: "Email Address" },
+    { key: "state", label: "State" },
+    { key: "city", label: "City" },
+    { key: "address", label: "Address" },
+    { key: "contactPersonName", label: "Contact Person Name" },
+    { key: "designation", label: "Designation" },
+    { key: "phoneNumber", label: "Phone Number" },
+    { key: "customerSay", label: "Customer Says" },
+    { key: "nextAction", label: "Next Action" },
+    { key: "nextCallDateTime", label: "Next Call Date & Time" },
+    { key: "notes", label: "Additional Note" },
+    { key: "attachment", label: "Attachment" },
+  ]
+
   const columnOptions = [
     { key: "timestamp", label: "Timestamp" },
     { key: "leadNo", label: "Lead No." },
     { key: "companyName", label: "Company Name" },
     { key: "division", label: "Division" },
     { key: "customerSay", label: "Customer Say" },
+    { key: "nextAction", label: "Next Action" },
+    { key: "nextCallDateTime", label: "Next Call Date & Time" },
     { key: "status", label: "Status" },
     { key: "enquiryStatus", label: "Enquiry Status" },
     { key: "receivedDate", label: "Received Date" },
@@ -519,9 +599,6 @@ function FollowUp() {
     { key: "qty4", label: "Qty 4" },
     { key: "item5", label: "Item 5" },
     { key: "qty5", label: "Qty 5" },
-    { key: "nextAction", label: "Next Action" },
-    { key: "callDate", label: "Call Date" },
-    { key: "callTime", label: "Call Time" },
     { key: "itemQty", label: "Item/Qty" }, // Add this line
   ]
 
@@ -548,55 +625,137 @@ function FollowUp() {
   const paginatedHistoryFollowUps = filteredHistoryFollowUps.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
 
   const pendingHeaders = [
-    'Actions', 'Lead No.', 'Company Name', 'Division', 'Person Name', 'Phone No.',
-    'Lead Source', 'Location', 'Customer Says', 'Enquiry Status', 'Assign To'
+    'Action', 'Lead No.',
+    ...pendingColumnOptions.filter(opt => pendingVisibleColumns[opt.key]).map(opt => opt.label)
   ]
 
-  const renderPendingRow = (followUp, index) => (
-    <tr key={`${followUp.leadId}-${index}`} className="hover:bg-slate-50 transition-colors">
-      <td className="sticky left-0 z-10 bg-white px-3 sm:px-4 py-3 sm:py-4 text-sm font-medium border-r border-gray-200">
-        <div className="flex flex-col sm:flex-row space-y-1 sm:space-y-0 sm:space-x-2">
-          <button
-            onClick={() => { setSelectedFollowUp(followUp); setShowPopup(true) }}
-            className="w-full sm:w-auto px-2 sm:px-3 py-1 text-xs border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-md transition-colors whitespace-nowrap"
-          >
-            View
-          </button>
-          <Link to={`/follow-up/new?leadId=${followUp.leadId}&leadNo=${followUp.leadId}`}>
-            <button className="w-full sm:w-auto px-2 sm:px-3 py-1 text-xs border border-sky-200 text-sky-600 hover:bg-sky-50 rounded-md transition-colors whitespace-nowrap">
-              Call Now <ArrowRightIcon className="ml-1 h-3 w-3 inline" />
+  const renderPendingRow = (followUp, index) => {
+    const primaryContact = followUp.contactPersons?.[0] || {}
+
+    return (
+      <tr key={`${followUp.leadId}-${index}`} className="hover:bg-slate-50 transition-colors">
+        <td className="sticky left-0 z-10 bg-white px-3 sm:px-4 py-3 sm:py-4 text-sm font-medium border-r border-gray-200">
+          <div className="flex flex-col sm:flex-row space-y-1 sm:space-y-0 sm:space-x-2">
+            <button
+              onClick={() => { setSelectedFollowUp(followUp); setShowPopup(true) }}
+              className="w-full sm:w-auto px-2 sm:px-3 py-1 text-xs border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-md transition-colors whitespace-nowrap"
+            >
+              View
             </button>
-          </Link>
-        </div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{followUp.leadId}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[120px] sm:max-w-[150px] truncate" title={followUp.companyName}>{followUp.companyName}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.division}>{followUp.division || "-"}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.personName}>{followUp.personName}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.phoneNumber}</td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4">
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${followUp.priority === "High" ? "bg-red-100 text-red-800" : followUp.priority === "Medium" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-800"}`}>
-          {followUp.leadSource}
-        </span>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.location}>{followUp.location}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[150px] sm:max-w-[200px] truncate" title={followUp.customerSay}>{followUp.customerSay}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-        <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.enquiryStatus}>{followUp.enquiryStatus}</div>
-      </td>
-      <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.assignedTo}</td>
-    </tr>
-  )
+            <Link to={`/follow-up/new?leadId=${followUp.leadId}&leadNo=${followUp.leadId}`}>
+              <button className="w-full sm:w-auto px-2 sm:px-3 py-1 text-xs border border-sky-200 text-sky-600 hover:bg-sky-50 rounded-md transition-colors whitespace-nowrap">
+                Call Now <ArrowRightIcon className="ml-1 h-3 w-3 inline" />
+              </button>
+            </Link>
+          </div>
+        </td>
+        <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm font-medium text-gray-900 whitespace-nowrap">{followUp.leadId}</td>
+        {pendingVisibleColumns.salesPersonName && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[120px] sm:max-w-[150px] truncate" title={followUp.receiverName}>{followUp.receiverName || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.salesType && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.salesType || "-"}</td>
+        )}
+        {pendingVisibleColumns.interaction && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.interaction || "-"}</td>
+        )}
+        {pendingVisibleColumns.leadSource && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4">
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${followUp.priority === "High" ? "bg-red-100 text-red-800" : followUp.priority === "Medium" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-800"}`}>
+              {followUp.leadSource}
+            </span>
+          </td>
+        )}
+        {pendingVisibleColumns.leadType && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.leadType || "-"}</td>
+        )}
+        {pendingVisibleColumns.companyName && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[120px] sm:max-w-[150px] truncate" title={followUp.companyName}>{followUp.companyName}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.division && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.division}>{followUp.division || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.nob && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.nob}>{followUp.nob || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.email && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[140px] sm:max-w-[180px] truncate" title={followUp.email}>{followUp.email || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.state && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.state}>{followUp.state || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.city && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.city}>{followUp.city || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.address && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[150px] sm:max-w-[200px] truncate" title={followUp.address}>{followUp.address || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.contactPersonName && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[100px] sm:max-w-[120px] truncate" title={primaryContact.name}>{primaryContact.name || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.designation && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[100px] sm:max-w-[120px] truncate" title={primaryContact.designation}>{primaryContact.designation || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.phoneNumber && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.phoneNumber || "-"}</td>
+        )}
+        {pendingVisibleColumns.customerSay && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[150px] sm:max-w-[200px] truncate" title={followUp.customerSay}>{followUp.customerSay || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.nextAction && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[120px] sm:max-w-[150px] truncate" title={followUp.nextAction}>{followUp.nextAction || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.nextCallDateTime && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{formatNextCallDateTime(followUp.nextCallDate, followUp.nextCallTime)}</td>
+        )}
+        {pendingVisibleColumns.notes && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
+            <div className="max-w-[150px] sm:max-w-[200px] truncate" title={followUp.notes}>{followUp.notes || "-"}</div>
+          </td>
+        )}
+        {pendingVisibleColumns.attachment && (
+          <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">
+            {followUp.attachment ? (
+              <a
+                href={followUp.attachment}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2 py-1 border border-sky-200 text-sky-600 hover:bg-sky-50 rounded-md text-xs font-medium transition-colors"
+              >
+                View
+              </a>
+            ) : (
+              "-"
+            )}
+          </td>
+        )}
+      </tr>
+    )
+  }
 
   const renderPendingCard = (followUp, index) => (
     <div key={index} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-3">
@@ -625,7 +784,7 @@ function FollowUp() {
         </div>
         <div>
           <p className="text-xs text-gray-500">Next Call</p>
-          <p className="font-medium text-orange-600">{followUp.nextCallDate || "Not Set"}</p>
+          <p className="font-medium text-orange-600">{followUp.nextCallDate ? formatNextCallDateTime(followUp.nextCallDate, followUp.nextCallTime) : "Not Set"}</p>
         </div>
         <div className="col-span-2">
           <p className="text-xs text-gray-500">Customer Say</p>
@@ -656,6 +815,8 @@ function FollowUp() {
       {visibleColumns.companyName && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500"><div className="max-w-[120px] sm:max-w-[150px] truncate" title={followUp.companyName}>{followUp.companyName}</div></td>}
       {visibleColumns.division && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500"><div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.division}>{followUp.division}</div></td>}
       {visibleColumns.customerSay && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500"><div className="max-w-[150px] sm:max-w-[200px] truncate" title={followUp.customerSay}>{followUp.customerSay}</div></td>}
+      {visibleColumns.nextAction && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500"><div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.nextAction}>{followUp.nextAction}</div></td>}
+      {visibleColumns.nextCallDateTime && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{formatNextCallDateTime(followUp.nextCallDate, followUp.nextCallTime)}</td>}
       {visibleColumns.status && (
         <td className="px-3 sm:px-4 py-3 sm:py-4">
           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${followUp.status === "Completed" ? "bg-green-100 text-green-800" : followUp.status === "Pending" ? "bg-sky-100 text-sky-800" : "bg-red-100 text-red-800"}`}>
@@ -680,9 +841,6 @@ function FollowUp() {
       {visibleColumns.qty4 && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.quantity4}</td>}
       {visibleColumns.item5 && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500"><div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.itemName5}>{followUp.itemName5}</div></td>}
       {visibleColumns.qty5 && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.quantity5}</td>}
-      {visibleColumns.nextAction && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500"><div className="max-w-[100px] sm:max-w-[120px] truncate" title={followUp.nextAction}>{followUp.nextAction}</div></td>}
-      {visibleColumns.callDate && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.nextCallDate}</td>}
-      {visibleColumns.callTime && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500 whitespace-nowrap">{followUp.nextCallTime}</td>}
       {visibleColumns.itemQty && <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500"><div className="min-w-[300px] break-words whitespace-normal" title={formatItemQty(followUp.itemQty)}>{formatItemQty(followUp.itemQty)}</div></td>}
     </tr>
   )
@@ -758,72 +916,63 @@ function FollowUp() {
 
             {/* Mobile: Stack filters vertically, Desktop: Horizontal */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-row gap-2 lg:gap-3">
-              {/* Company Name Filter - Only show for pending tab */}
-              {activeTab === "pending" && (
-                <div className="min-w-0">
-                  <input
-                    list="company-options"
-                    value={companyFilter === "all" ? "" : companyFilter}
-                    onChange={(e) => setCompanyFilter(e.target.value || "all")}
-                    placeholder="Select or type company"
-                    className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-                  />
-                  <datalist id="company-options">
-                    <option value="all">All Companies</option>
-                    {Array.from(new Set(pendingFollowUps.map((item) => item.companyName)))
-                      .filter(Boolean)
-                      .map((company) => (
-                        <option key={company} value={company} />
-                      ))}
-                  </datalist>
-                </div>
-              )}
+              {/* Company / Person / NOB filters — shown for both Pending and
+                  History tabs, with their option lists sourced from
+                  whichever tab's data is currently active. */}
+              {(() => {
+                const filterSource = activeTab === "pending" ? pendingFollowUps : historyFollowUps
+                return (
+                  <>
+                    {/* Company Name Filter */}
+                    <div className="min-w-0">
+                      <select
+                        value={companyFilter}
+                        onChange={(e) => setCompanyFilter(e.target.value)}
+                        className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                      >
+                        <option value="all">All Companies</option>
+                        {Array.from(new Set(filterSource.map((item) => item.companyName)))
+                          .filter(Boolean)
+                          .map((company) => (
+                            <option key={company} value={company}>{company}</option>
+                          ))}
+                      </select>
+                    </div>
 
-              {/* Person Name Filter - Only show for pending tab */}
-              {activeTab === "pending" && (
-                <div className="min-w-0">
-                  <input
-                    list="person-options"
-                    value={personFilter === "all" ? "" : personFilter}
-                    onChange={(e) => setPersonFilter(e.target.value || "all")}
-                    placeholder="Select or type person"
-                    className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-                  />
-                  <datalist id="person-options">
-                    <option value="all">All Persons</option>
-                    {Array.from(new Set(pendingFollowUps.map((item) => item.personName)))
-                      .filter(Boolean)
-                      .map((person) => (
-                        <option key={person} value={person} />
-                      ))}
-                  </datalist>
-                </div>
-              )}
+                    {/* Person Name Filter */}
+                    <div className="min-w-0">
+                      <select
+                        value={personFilter}
+                        onChange={(e) => setPersonFilter(e.target.value)}
+                        className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                      >
+                        <option value="all">All Persons</option>
+                        {Array.from(new Set(filterSource.map((item) => item.personName)))
+                          .filter(Boolean)
+                          .map((person) => (
+                            <option key={person} value={person}>{person}</option>
+                          ))}
+                      </select>
+                    </div>
 
-              {/* Phone Number Filter - Only show for pending tab */}
-              {activeTab === "pending" && (
-                <div className="min-w-0">
-                  <input
-                    list="phone-options"
-                    value={phoneFilter === "all" ? "" : phoneFilter}
-                    onChange={(e) => setPhoneFilter(e.target.value || "all")}
-                    placeholder="Select or type number"
-                    className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-                  />
-                  <datalist id="phone-options">
-                    <option value="all">All Numbers</option>
-                    {Array.from(
-                      new Set(
-                        pendingFollowUps
-                          .map((item) => (item.phoneNumber ? item.phoneNumber.toString().trim() : ""))
-                          .filter(Boolean),
-                      ),
-                    ).map((phone) => (
-                      <option key={phone} value={phone} />
-                    ))}
-                  </datalist>
-                </div>
-              )}
+                    {/* NOB Filter */}
+                    <div className="min-w-0">
+                      <select
+                        value={nobFilter}
+                        onChange={(e) => setNobFilter(e.target.value)}
+                        className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                      >
+                        <option value="all">All NOB</option>
+                        {Array.from(new Set(filterSource.map((item) => item.nob)))
+                          .filter(Boolean)
+                          .map((nob) => (
+                            <option key={nob} value={nob}>{nob}</option>
+                          ))}
+                      </select>
+                    </div>
+                  </>
+                )
+              })()}
 
               {/* Date Filter */}
               <div className="min-w-0">
@@ -848,66 +997,74 @@ function FollowUp() {
                 </select>
               </div>
 
-              {/* Column Selection Dropdown - Only show for history tab */}
-              {activeTab === "history" && (
-                <div className="min-w-0 relative">
-                  <button
-                    onClick={() => setShowColumnDropdown(!showColumnDropdown)}
-                    className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white flex items-center justify-between"
-                  >
-                    <span>Select Columns</span>
-                    <svg
-                      className={`w-4 h-4 transition-transform ${showColumnDropdown ? "rotate-180" : ""}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
+              {/* Column Selection Dropdown - shown for both Pending and History tabs */}
+              {(() => {
+                const isPendingTab = activeTab === "pending"
+                const activeColumnOptions = isPendingTab ? pendingColumnOptions : columnOptions
+                const activeVisibleColumns = isPendingTab ? pendingVisibleColumns : visibleColumns
+                const activeColumnToggle = isPendingTab ? handlePendingColumnToggle : handleColumnToggle
+                const activeSelectAll = isPendingTab ? handlePendingSelectAll : handleSelectAll
+
+                return (
+                  <div className="min-w-0 relative">
+                    <button
+                      onClick={() => setShowColumnDropdown(!showColumnDropdown)}
+                      className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white flex items-center justify-between"
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
+                      <span>Select Columns</span>
+                      <svg
+                        className={`w-4 h-4 transition-transform ${showColumnDropdown ? "rotate-180" : ""}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
 
-                  {showColumnDropdown && (
-                    <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-80 overflow-y-auto">
-                      <div className="p-2">
-                        {/* Select All Option */}
-                        <div className="flex items-center p-2 hover:bg-gray-50 rounded">
-                          <input
-                            type="checkbox"
-                            id="select-all"
-                            checked={Object.values(visibleColumns).every(Boolean)}
-                            onChange={handleSelectAll}
-                            className="h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
-                          />
-                          <label htmlFor="select-all" className="ml-2 text-sm font-medium text-gray-900 cursor-pointer">
-                            All Columns
-                          </label>
-                        </div>
-
-                        <hr className="my-2" />
-
-                        {/* Individual Column Options */}
-                        {columnOptions.map((option) => (
-                          <div key={option.key} className="flex items-center p-2 hover:bg-gray-50 rounded">
+                    {showColumnDropdown && (
+                      <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-300 rounded-md shadow-lg z-50 max-h-80 overflow-y-auto">
+                        <div className="p-2">
+                          {/* Select All Option */}
+                          <div className="flex items-center p-2 hover:bg-gray-50 rounded">
                             <input
                               type="checkbox"
-                              id={`column-${option.key}`}
-                              checked={visibleColumns[option.key]}
-                              onChange={() => handleColumnToggle(option.key)}
+                              id="select-all"
+                              checked={Object.values(activeVisibleColumns).every(Boolean)}
+                              onChange={activeSelectAll}
                               className="h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
                             />
-                            <label
-                              htmlFor={`column-${option.key}`}
-                              className="ml-2 text-sm text-gray-700 cursor-pointer flex-1"
-                            >
-                              {option.label}
+                            <label htmlFor="select-all" className="ml-2 text-sm font-medium text-gray-900 cursor-pointer">
+                              All Columns
                             </label>
                           </div>
-                        ))}
+
+                          <hr className="my-2" />
+
+                          {/* Individual Column Options */}
+                          {activeColumnOptions.map((option) => (
+                            <div key={option.key} className="flex items-center p-2 hover:bg-gray-50 rounded">
+                              <input
+                                type="checkbox"
+                                id={`column-${option.key}`}
+                                checked={activeVisibleColumns[option.key]}
+                                onChange={() => activeColumnToggle(option.key)}
+                                className="h-4 w-4 text-sky-600 focus:ring-sky-500 border-gray-300 rounded"
+                              />
+                              <label
+                                htmlFor={`column-${option.key}`}
+                                className="ml-2 text-sm text-gray-700 cursor-pointer flex-1"
+                              >
+                                {option.label}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* Filter Dropdown */}
               <div className="min-w-0">
@@ -955,7 +1112,7 @@ function FollowUp() {
                       data={paginatedPendingFollowUps}
                       renderRow={renderPendingRow}
                       renderCard={renderPendingCard}
-                      minWidth="1200px"
+                      minWidth="2600px"
                       currentPage={currentPage}
                       totalPages={pendingTotalPages}
                       itemsPerPage={itemsPerPage}
@@ -1028,7 +1185,7 @@ function FollowUp() {
                         <p className="text-base font-semibold break-words">{selectedFollowUp?.leadId}</p>
                       </div>
                       <div className="space-y-2">
-                        <p className="text-sm font-medium text-gray-500">Lead Receiver Name</p>
+                        <p className="text-sm font-medium text-gray-500">Sales Person Name</p>
                         <p className="text-base break-words">{selectedFollowUp?.receiverName || "-"}</p>
                       </div>
                       <div className="space-y-2">
@@ -1169,6 +1326,65 @@ function FollowUp() {
                       </div>
                     )}
                   </div>
+
+                  {/* Follow-up History Timeline */}
+                  {(() => {
+                    const currentLeadId = selectedFollowUp?.leadId || selectedFollowUp?.leadNo;
+                    // Sort history from newest to oldest by using reverse() or simple slice().reverse() if timestamp isn't easily parseable
+                    // Assuming historyFollowUps is generally newest last, we reverse it to show newest first
+                    const leadHistory = historyFollowUps
+                      .filter(h => h.leadNo === currentLeadId || h.leadId === currentLeadId)
+                      .reverse();
+
+                    if (leadHistory.length > 0) {
+                      return (
+                        <div className="space-y-3 pt-4 border-t border-gray-100">
+                          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Follow-up History</h4>
+                          <div className="space-y-3">
+                            {leadHistory.map((historyItem, idx) => (
+                              <div key={idx} className="p-4 border border-gray-200 rounded-lg bg-white shadow-sm relative">
+                                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 gap-2">
+                                  <div className="text-sm font-semibold text-gray-900 bg-gray-100 px-2 py-1 rounded w-fit">
+                                    {historyItem.timestamp || "Unknown Date"}
+                                  </div>
+                                  <div className="flex gap-2 flex-wrap">
+                                    {historyItem.enquiryReceivedStatus && (
+                                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                                        {historyItem.enquiryReceivedStatus}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="space-y-1.5 mt-3">
+                                  {historyItem.customerSay && (
+                                    <div className="text-sm text-gray-700">
+                                      <span className="font-semibold text-gray-900">Feedback: </span>
+                                      {historyItem.customerSay}
+                                    </div>
+                                  )}
+                                  {historyItem.nextAction && (
+                                    <div className="text-sm text-gray-700">
+                                      <span className="font-semibold text-gray-900">Next Action: </span>
+                                      {historyItem.nextAction} 
+                                      {historyItem.nextCallDate && ` on ${historyItem.nextCallDate}`}
+                                      {historyItem.nextCallTime && ` at ${historyItem.nextCallTime}`}
+                                    </div>
+                                  )}
+                                  {historyItem.projectName && (
+                                    <div className="text-sm text-gray-700">
+                                      <span className="font-semibold text-gray-900">Project: </span>
+                                      {historyItem.projectName}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               </div>
 

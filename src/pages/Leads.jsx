@@ -3,38 +3,40 @@
 import { useState, useEffect, useContext } from "react"
 import { AuthContext } from "../App"
 import { mockApi } from "../services/mockApi"
-import { getLeadReceiverNames, getLeadSources, getNOBs, getCreditDays, getCreditLimits, getCompanies } from "../utils/storageManager"
+import {
+  getLeadReceiverNames, saveLeadReceiverNames,
+  getLeadSources, saveLeadSources,
+  getNOBs, saveNOBs,
+  getCompanies, saveCompany
+} from "../utils/storageManager"
+import { fileToBase64, generateId } from "../utils/helpers"
 
 function Leads() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formData, setFormData] = useState({
     receiverName: "",
+    salesType: "", // New field
     source: "",
     leadType: "", // New field (Incoming / Outgoing)
     companyName: "",
     phoneNumber: "",
     salespersonName: "",
-    location: "",
     email: "",
     contactPersons: [{ name: "", designation: "", number: "" }], // New array for contact persons
     state: "", // New field
     city: "", // New field
     address: "", // New field
-    creditAccess: "", // New field
-    creditDays: "", // New field
-    creditLimit: "", // New field
     nob: "", // New field for Nature of Business
     division: "", // New field for Division, auto-fills from Company Master
-    gst: "", // New field for GST
-    notes: ""
+    notes: "",
+    interaction: "", // New field: how this lead was interacted with (Call/WP/Visit)
+    attachment: "" // New field: optional attachment, stored as base64
   })
   const [receiverNames, setReceiverNames] = useState([])
   const [leadSources, setLeadSources] = useState([])
   const [companyOptions, setCompanyOptions] = useState([]) // State for company dropdown
   const [companyDetailsMap, setCompanyDetailsMap] = useState({}) // State to store company details
   const [nextLeadNumber, setNextLeadNumber] = useState("")
-  const [creditDaysOptions, setCreditDaysOptions] = useState([]) // New state for credit days dropdown
-  const [creditLimitOptions, setCreditLimitOptions] = useState([]) // New state for credit limit dropdown
   const { showNotification } = useContext(AuthContext)
   const [designationOptions, setDesignationOptions] = useState([])
   const [nobOptions, setNobOptions] = useState([]) // New state for nature of business dropdown
@@ -79,14 +81,12 @@ function Leads() {
       console.error("Error fetching dropdown values:", error)
     }
 
-    // Lead Receiver Name, Lead Source, NOB, Credit Days & Credit Limit are
-    // managed from the Master module, so pull their live values from there.
+    // Lead Receiver Name, Lead Source & NOB are managed from the Master
+    // module, so pull their live values from there.
     try {
       setReceiverNames(getLeadReceiverNames().map(item => item.name))
       setLeadSources(getLeadSources().map(item => item.name))
       setNobOptions(getNOBs().map(item => item.name))
-      setCreditDaysOptions(getCreditDays().map(item => item.name))
-      setCreditLimitOptions(getCreditLimits().map(item => item.name))
     } catch (error) {
       console.error("Error loading master dropdown data:", error)
     }
@@ -109,13 +109,11 @@ function Leads() {
             salesPerson: company.contactPersons?.[0]?.name || "",
             phoneNumber: company.phone || "",
             email: company.email || "",
-            location: company.city || "",
             division: company.division || "",
             state: company.state || "",
             city: company.city || "",
             address: company.address || "",
             nob: company.nob || "",
-            gst: company.gst || "",
             contactPersons: company.contactPersons || []
           }
         })
@@ -154,18 +152,50 @@ function Leads() {
         companyName: value,
         phoneNumber: companyDetails.phoneNumber || "",
         salespersonName: companyDetails.salesPerson || "",
-        location: companyDetails.location || "",
         email: companyDetails.email || "",
         division: companyDetails.division || "",
         state: companyDetails.state || "",
         city: companyDetails.city || "",
         address: companyDetails.address || "",
         nob: companyDetails.nob || "",
-        gst: companyDetails.gst || "",
         contactPersons: companyContacts.length > 0
           ? companyContacts
           : [{ name: "", designation: "", number: "" }]
       }))
+    } else if (id === 'companyName' && !value) {
+      // Company deselected — clear out everything that was auto-filled
+      // from the previous selection instead of leaving it stale.
+      setFormData(prevData => ({
+        ...prevData,
+        companyName: "",
+        phoneNumber: "",
+        salespersonName: "",
+        email: "",
+        division: "",
+        state: "",
+        city: "",
+        address: "",
+        nob: "",
+        contactPersons: [{ name: "", designation: "", number: "" }]
+      }))
+    }
+  }
+
+  // Reads the selected file and stores it as a base64 data URL on formData
+  const handleAttachmentChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (file.size > 2 * 1024 * 1024) {
+      showNotification("Please upload a file smaller than 2MB.", "error")
+      return
+    }
+
+    try {
+      const base64 = await fileToBase64(file)
+      setFormData(prevData => ({ ...prevData, attachment: base64 }))
+    } catch (error) {
+      showNotification("Could not read the selected file. Please try again.", "error")
     }
   }
 
@@ -215,6 +245,29 @@ function Leads() {
   }
 
 
+  // Lets the Sales Person Name / Lead Source / NOB fields accept a value
+  // typed fresh (not just picked from the list) — on save, anything not
+  // already in that Master list gets added there automatically, the same
+  // way a "New Customer" company name registers itself in Company Master.
+  const addValueToNameMaster = (value, getList, saveList, prefix, noField) => {
+    const trimmed = (value || "").trim()
+    if (!trimmed) return
+
+    const list = getList()
+    const alreadyExists = list.some(item => item.name.trim().toLowerCase() === trimmed.toLowerCase())
+    if (alreadyExists) return
+
+    saveList([
+      ...list,
+      {
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        [noField]: `${prefix}-${String(list.length + 1).padStart(3, '0')}`,
+        name: trimmed
+      }
+    ])
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setIsSubmitting(true)
@@ -234,29 +287,67 @@ function Leads() {
       const result = await mockApi.submitLead(submissionData)
 
       if (result.success) {
+        // Any freshly-typed Sales Person Name / Lead Source / NOB not
+        // already in its Master list gets added there now.
+        addValueToNameMaster(formData.receiverName, getLeadReceiverNames, saveLeadReceiverNames, "LRN", "lrnNo")
+        addValueToNameMaster(formData.source, getLeadSources, saveLeadSources, "LS", "lsNo")
+        addValueToNameMaster(formData.nob, getNOBs, saveNOBs, "NOB", "nobNo")
+        await fetchDropdownData()
+
+        // "New Customer" means this company doesn't exist in Company Master
+        // yet — register it there now so it shows up in Master > Company
+        // Details and is available as a Company Name option going forward.
+        if (formData.salesType === "New Customer" && formData.companyName.trim()) {
+          const existingCompanies = getCompanies()
+          const alreadyExists = existingCompanies.some(
+            c => c.name.trim().toLowerCase() === formData.companyName.trim().toLowerCase()
+          )
+
+          if (!alreadyExists) {
+            saveCompany({
+              id: generateId(),
+              timestamp: new Date().toISOString(),
+              vnNo: `CN-${String(existingCompanies.length + 1).padStart(3, '0')}`,
+              name: formData.companyName.trim(),
+              gst: "",
+              email: formData.email || "",
+              phone: formData.phoneNumber || "",
+              address: formData.address || "",
+              state: formData.state || "",
+              city: formData.city || "",
+              nob: formData.nob || "",
+              division: formData.division || "",
+              contactPersons: formData.contactPersons.filter(p => p.name || p.designation || p.number),
+              proof: formData.attachment || ""
+            })
+
+            // Refresh so the newly-registered company is immediately
+            // available as a Company Name option on this form.
+            await fetchCompanyData()
+          }
+        }
+
         showNotification("Lead created successfully", "success")
 
         // Reset form
         setFormData({
           receiverName: "",
+          salesType: "",
           source: "",
           leadType: "",
           companyName: "",
           phoneNumber: "",
           salespersonName: "",
-          location: "",
           email: "",
           contactPersons: [{ name: "", designation: "", number: "" }],
           state: "",
           city: "",
           address: "",
-          creditAccess: "",
-          creditDays: "",
-          creditLimit: "",
           nob: "",
           division: "",
-          gst: "",
-          notes: ""
+          notes: "",
+          interaction: "",
+          attachment: ""
         })
       } else {
         showNotification("Error creating lead: " + (result.error || "Unknown error"), "error")
@@ -287,19 +378,56 @@ function Leads() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label htmlFor="receiverName" className="block text-sm font-medium text-gray-700">
-                  Lead Receiver Name
+                  Sales Person Name
                 </label>
-                <select
+                <input
+                  list="receiverNameOptions"
                   id="receiverName"
                   value={formData.receiverName}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Select or type sales person name"
+                  required
+                />
+                <datalist id="receiverNameOptions">
+                  {receiverNames.map((name, index) => (
+                    <option key={index} value={name} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="salesType" className="block text-sm font-medium text-gray-700">
+                  Sales Type
+                </label>
+                <select
+                  id="salesType"
+                  value={formData.salesType}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   required
                 >
-                  <option value="">Select receiver</option>
-                  {receiverNames.map((name, index) => (
-                    <option key={index} value={name}>{name}</option>
-                  ))}
+                  <option value="">Select sales type</option>
+                  <option value="New Customer">New Customer</option>
+                  <option value="Existing Customer">Existing Customer</option>
+                  <option value="Existing Customer - visited before but no Order Yet">Existing Customer - visited before but no Order Yet</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="interaction" className="block text-sm font-medium text-gray-700">
+                  Interaction
+                </label>
+                <select
+                  id="interaction"
+                  value={formData.interaction}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select interaction type</option>
+                  <option value="Call">Call</option>
+                  <option value="WP">WP</option>
+                  <option value="Visit">Visit</option>
                 </select>
               </div>
 
@@ -307,18 +435,20 @@ function Leads() {
                 <label htmlFor="source" className="block text-sm font-medium text-gray-700">
                   Lead Source
                 </label>
-                <select
+                <input
+                  list="sourceOptions"
                   id="source"
                   value={formData.source}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Select or type lead source"
                   required
-                >
-                  <option value="">Select source</option>
+                />
+                <datalist id="sourceOptions">
                   {leadSources.map((source, index) => (
-                    <option key={index} value={source}>{source}</option>
+                    <option key={index} value={source} />
                   ))}
-                </select>
+                </datalist>
               </div>
 
               <div className="space-y-2">
@@ -342,65 +472,67 @@ function Leads() {
                 <label htmlFor="companyName" className="block text-sm font-medium text-gray-700">
                   Company Name
                 </label>
+                {formData.salesType === "New Customer" ? (
+                  <>
+                    <input
+                      id="companyName"
+                      type="text"
+                      value={formData.companyName}
+                      onChange={handleChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Enter new company name"
+                      required
+                    />
+                    <p className="text-xs text-gray-500">
+                      New company — will be added to Company Master on save.
+                    </p>
+                  </>
+                ) : (
+                  <select
+                    id="companyName"
+                    value={formData.companyName}
+                    onChange={handleChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="">Select company</option>
+                    {companyOptions.map((company, index) => (
+                      <option key={index} value={company}>{company}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="division" className="block text-sm font-medium text-gray-700">
+                  Division
+                </label>
                 <input
-                  list="companyOptions"
-                  id="companyName"
-                  value={formData.companyName}
+                  id="division"
+                  value={formData.division}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
+                  placeholder="Division will auto-fill"
                 />
-                <datalist id="companyOptions">
-                  {companyOptions.map((company, index) => (
-                    <option key={index} value={company} />
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="nob" className="block text-sm font-medium text-gray-700">
+                  Nature of Business (NOB)
+                </label>
+                <input
+                  list="nobOptionsList"
+                  id="nob"
+                  value={formData.nob}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Select or type nature of business"
+                />
+                <datalist id="nobOptionsList">
+                  {nobOptions.map((option, index) => (
+                    <option key={index} value={option} />
                   ))}
                 </datalist>
-
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700">
-                  Phone Number
-                </label>
-                <input
-                  id="phoneNumber"
-                  value={formData.phoneNumber}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Phone number will auto-fill"
-                // readOnly={formData.companyName !== ""}
-                // required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="salespersonName" className="block text-sm font-medium text-gray-700">
-                  Person Name
-                </label>
-                <input
-                  id="salespersonName"
-                  value={formData.salespersonName}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Salesperson name will auto-fill"
-                // readOnly={formData.companyName !== ""}
-                // required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="location" className="block text-sm font-medium text-gray-700">
-                  Location
-                </label>
-                <input
-                  id="location"
-                  value={formData.location}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Location will auto-fill"
-                // readOnly={formData.companyName !== ""}
-                // required
-                />
               </div>
 
               <div className="space-y-2">
@@ -536,109 +668,6 @@ function Leads() {
               ))}
             </div>
 
-            {/* Additional Fields */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label htmlFor="nob" className="block text-sm font-medium text-gray-700">
-                  Nature of Business (NOB)
-                </label>
-                <select
-                  id="nob"
-                  value={formData.nob}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                // required
-                >
-                  <option value="">Select nature of business</option>
-                  {nobOptions.map((option, index) => (
-                    <option key={index} value={option}>{option}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="division" className="block text-sm font-medium text-gray-700">
-                  Division
-                </label>
-                <input
-                  id="division"
-                  value={formData.division}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Division will auto-fill"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="gst" className="block text-sm font-medium text-gray-700">
-                  GST Number
-                </label>
-                <input
-                  id="gst"
-                  value={formData.gst}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="GST number"
-                // required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="creditAccess" className="block text-sm font-medium text-gray-700">
-                  Credit Access
-                </label>
-                <select
-                  id="creditAccess"
-                  value={formData.creditAccess}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                // required
-                >
-                  <option value="">Select option</option>
-                  <option value="Yes">Yes</option>
-                  <option value="No">No</option>
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="creditDays" className="block text-sm font-medium text-gray-700">
-                  Credit Days
-                </label>
-                <select
-                  id="creditDays"
-                  value={formData.creditDays}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                // required={formData.creditAccess === "Yes"}
-                // disabled={formData.creditAccess !== "Yes"}
-                >
-                  <option value="">Select credit days</option>
-                  {creditDaysOptions.map((option, index) => (
-                    <option key={index} value={option}>{option}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="creditLimit" className="block text-sm font-medium text-gray-700">
-                  Credit Limit
-                </label>
-                <select
-                  id="creditLimit"
-                  value={formData.creditLimit}
-                  onChange={handleChange}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                // required={formData.creditAccess === "Yes"}
-                // disabled={formData.creditAccess !== "Yes"}
-                >
-                  <option value="">Select credit limit</option>
-                  {creditLimitOptions.map((option, index) => (
-                    <option key={index} value={option}>{option}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
             <div className="space-y-2">
               <label htmlFor="notes" className="block text-sm font-medium text-gray-700">
                 Additional Notes
@@ -650,6 +679,40 @@ function Leads() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Enter any additional information"
               />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="attachment" className="block text-sm font-medium text-gray-700">
+                Attachment
+              </label>
+              <div className="flex items-center gap-2">
+                <label className="flex-1 cursor-pointer">
+                  <div
+                    className={`flex items-center justify-center gap-2 border border-dashed rounded-md px-3 py-2 text-sm transition-colors ${formData.attachment
+                      ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                      : "bg-gray-50 border-gray-300 text-gray-400 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
+                      }`}
+                  >
+                    {formData.attachment ? "File attached" : "Browse file"}
+                  </div>
+                  <input
+                    id="attachment"
+                    type="file"
+                    onChange={handleAttachmentChange}
+                    className="hidden"
+                    accept="image/*,.pdf"
+                  />
+                </label>
+                {formData.attachment && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prevData => ({ ...prevData, attachment: "" }))}
+                    className="px-3 py-2 text-sm text-red-500 hover:text-red-700 border border-gray-300 rounded-md"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <div className="p-6 border-t flex justify-end">

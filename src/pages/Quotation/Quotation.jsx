@@ -49,10 +49,50 @@ const normalizeTermDescriptions = (terms) => {
   return []
 }
 
-const computeItemTotal = (qty, rate, gst) => {
+const computeItemTotal = (qty, rate, gst, discountPercent = 0) => {
   const base = Number(qty || 0) * Number(rate || 0)
-  const gstAmount = base * (Number(gst || 0) / 100)
-  return Number((base + gstAmount).toFixed(2))
+  const itemDiscount = base * (Number(discountPercent || 0) / 100)
+  const afterDiscount = base - itemDiscount
+  const gstAmount = afterDiscount * (Number(gst || 0) / 100)
+  return Number((afterDiscount + gstAmount).toFixed(2))
+}
+
+// Full calculation breakdown behind the Items & Quantities footer/PDF/preview
+// — Base Price (pre-tax) + GST, less any overall Discount, = Grand Total.
+const computeSummary = (items) => {
+  const basePrice = (items || []).reduce((sum, item) => sum + Number(item.qty || 0) * Number(item.rate || 0), 0)
+  const discountAmount = (items || []).reduce((sum, item) => {
+    const base = Number(item.qty || 0) * Number(item.rate || 0)
+    return sum + (base * (Number(item.discountPercent || 0) / 100))
+  }, 0)
+  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.total || 0), 0)
+  const gstAmount = itemsTotal - (basePrice - discountAmount)
+  const grandTotal = itemsTotal
+  return { basePrice, gstAmount, discountAmount, grandTotal }
+}
+
+// Revision numbering: a quotation's "base" number is whatever comes before
+// a trailing "-R<n>" suffix. Revising always looks at every saved record
+// sharing that base and picks the next number after the highest one found,
+// so it advances correctly for that lead's quotation regardless of which
+// past revision was selected as the starting point.
+const getBaseQuotationNumber = (poNumber) => (poNumber || "").replace(/-R\d+$/i, "")
+
+const getNextRevisionNumber = (poNumber, history) => {
+  const base = getBaseQuotationNumber(poNumber)
+  if (!base) return 1
+  let maxRevision = 0
+  ;(history || []).forEach((record) => {
+    const recordNo = record.poNumber || record.quotationNo || ""
+    if (getBaseQuotationNumber(recordNo) === base) {
+      const match = recordNo.match(/-R(\d+)$/i)
+      if (match) {
+        const rev = parseInt(match[1], 10)
+        if (rev > maxRevision) maxRevision = rev
+      }
+    }
+  })
+  return maxRevision + 1
 }
 
 const makeEmptyItem = (id) => ({
@@ -60,9 +100,9 @@ const makeEmptyItem = (id) => ({
   item: "",
   qty: 1,
   rate: 0,
+  discountPercent: 0,
   hsn: "",
   gst: 18,
-  deliveryDate: "",
   total: 0,
 })
 
@@ -83,24 +123,40 @@ const makeInitialFormData = () => ({
   freightType: "",
   advancePayment: "No",
   advanceAmount: "",
+  discount: "",
+  discountPercent: "",
 })
+
+// Real pixel size of Nutechlogo.png — used to keep the embedded PDF image
+// at the correct aspect ratio (it's a wide wordmark, not a square icon).
+export const LOGO_ASPECT_RATIO = 3001 / 925
 
 // Builds the quotation PDF from a flat data object shaped like the
 // Send PO payload (see handleSendPo) — reused for both the initial save and
-// regenerating a PDF for an already-saved History record.
-const buildQuotationPdf = (data) => {
+// regenerating a PDF for an already-saved History record. `logoDataUri` is
+// the Nutech logo pre-loaded as a base64 data URI (jsPDF can't embed a
+// plain asset URL directly) — falls back to the firm name as text if it
+// hasn't loaded yet.
+export const buildQuotationPdf = (data, logoDataUri) => {
   const doc = new jsPDF("p", "mm", "a4")
   const pageWidth = 210
   const margin = 12
   let y = 16
 
   // Firm Header (Centered)
-  doc.setFont("helvetica", "bold")
-  doc.setFontSize(22)
-  doc.setTextColor(14, 116, 144) // matches a sky/cyan theme, or just black
-  doc.text(data.firmName || FIRM_NAME, pageWidth / 2, y, { align: "center" })
-  y += 6
-  
+  if (logoDataUri) {
+    const logoWidth = 55
+    const logoHeight = logoWidth / LOGO_ASPECT_RATIO
+    doc.addImage(logoDataUri, "PNG", (pageWidth - logoWidth) / 2, y, logoWidth, logoHeight)
+    y += logoHeight + 6
+  } else {
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(22)
+    doc.setTextColor(14, 116, 144) // matches a sky/cyan theme, or just black
+    doc.text(data.firmName || FIRM_NAME, pageWidth / 2, y, { align: "center" })
+    y += 6
+  }
+
   doc.setFont("helvetica", "normal")
   doc.setFontSize(9)
   doc.setTextColor(80, 80, 80)
@@ -127,11 +183,10 @@ const buildQuotationPdf = (data) => {
   doc.setFontSize(9)
   doc.setFont("helvetica", "normal")
   doc.setTextColor(0, 0, 0)
-  doc.text(`PO Number: ${data.poNumber || "-"}`, margin, y)
-  doc.text(`PO Date: ${formatDisplayDate(data.poDate)}`, pageWidth - margin, y, { align: "right" })
+  doc.text(`Quotation Number: ${data.poNumber || "-"}`, margin, y)
+  doc.text(`Quotation Date: ${formatDisplayDate(data.quotationDate)}`, pageWidth - margin, y, { align: "right" })
   y += 5
   doc.text(`Lead No.: ${data.leadNo || "-"}`, margin, y)
-  doc.text(`Quotation Date: ${formatDisplayDate(data.quotationDate)}`, pageWidth - margin, y, { align: "right" })
   y += 8
 
   doc.setDrawColor(200)
@@ -173,15 +228,15 @@ const buildQuotationPdf = (data) => {
     item.item,
     item.qty,
     Number(item.rate || 0).toFixed(2),
+    `${item.discountPercent || 0}%`,
     item.hsn || "-",
     `${item.gst}%`,
-    item.deliveryDate ? formatDisplayDate(item.deliveryDate) : "-",
     Number(item.total || 0).toFixed(2),
   ])
 
   autoTable(doc, {
     startY: y,
-    head: [["S/N", "Item", "Qty", "Rate", "HSN", "GST%", "Delivery Date", "Total"]],
+    head: [["S/N", "Item", "Qty", "Rate", "Disc %", "HSN", "GST%", "Total"]],
     body: itemRows,
     styles: { fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [14, 116, 144], textColor: 255, fontStyle: "bold" },
@@ -189,8 +244,16 @@ const buildQuotationPdf = (data) => {
   })
 
   y = doc.lastAutoTable.finalY + 8
+  const summary = computeSummary(data.items)
+  doc.setFont("helvetica", "normal")
+  doc.text(`Base Price: ${summary.basePrice.toFixed(2)}`, pageWidth - margin, y, { align: "right" })
+  y += 5
+  doc.text(`Discount: ${summary.discountAmount.toFixed(2)}`, pageWidth - margin, y, { align: "right" })
+  y += 5
+  doc.text(`GST: ${summary.gstAmount.toFixed(2)}`, pageWidth - margin, y, { align: "right" })
+  y += 5
   doc.setFont("helvetica", "bold")
-  doc.text(`Grand Total: ${Number(data.grandTotal || 0).toFixed(2)}`, pageWidth - margin, y, { align: "right" })
+  doc.text(`Grand Total: ${summary.grandTotal.toFixed(2)}`, pageWidth - margin, y, { align: "right" })
   y += 8
 
   doc.setFont("helvetica", "normal")
@@ -229,6 +292,7 @@ function Quotation() {
   const { showNotification } = useContext(AuthContext)
 
   const [activeTab, setActiveTab] = useState("create")
+  const [selectedRevisionSource, setSelectedRevisionSource] = useState("")
 
   const [callTrackerLeads, setCallTrackerLeads] = useState([])
   const [isLoadingLeads, setIsLoadingLeads] = useState(true)
@@ -240,6 +304,7 @@ function Quotation() {
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
+  const [logoDataUri, setLogoDataUri] = useState("")
 
   const [historyList, setHistoryList] = useState([])
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
@@ -290,6 +355,19 @@ function Quotation() {
     mockApi.fetchProducts().then((products) => {
       setProductNames((products || []).map((p) => p.name).filter(Boolean))
     }).catch(() => setProductNames([]))
+
+    // jsPDF can't embed a plain asset URL — pre-load the logo once as a
+    // base64 data URI so the generated PDF can show the real image.
+    fetch(nutechLogo)
+      .then((res) => res.blob())
+      .then((blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      }))
+      .then(setLogoDataUri)
+      .catch((error) => console.error("Error loading logo for PDF:", error))
   }, [])
 
   useEffect(() => {
@@ -331,8 +409,8 @@ function Quotation() {
     }))
 
     // Carry over the items entered on the Call Tracker "Order Receive" form
-    // ({name, uom, quantity} each) — rate/HSN/GST%/delivery date weren't
-    // captured there, so those start blank/default for the user to fill in.
+    // ({name, uom, quantity} each) — rate/HSN/GST% weren't captured there,
+    // so those start blank/default for the user to fill in.
     if (Array.isArray(lead.items) && lead.items.length > 0) {
       setItems(
         lead.items.map((leadItem, index) => {
@@ -343,16 +421,61 @@ function Quotation() {
             item: leadItem.name || "",
             qty,
             rate: 0,
+            discountPercent: 0,
             hsn: "",
             gst,
-            deliveryDate: "",
-            total: computeItemTotal(qty, 0, gst),
+            total: computeItemTotal(qty, 0, gst, 0),
           }
         })
       )
     } else {
       setItems([makeEmptyItem(1)])
     }
+  }
+
+  // Revise tab: pick any previously saved quotation and load its full data
+  // into the same form for editing. Saving computes the next revision
+  // number for that quotation's lineage rather than a fresh PO number.
+  const handleReviseSelect = (quotationNo) => {
+    setSelectedRevisionSource(quotationNo)
+
+    const record = historyList.find((r) => (r.poNumber || r.quotationNo) === quotationNo)
+    if (!record) return
+
+    setFormData({
+      ...makeInitialFormData(),
+      leadNo: record.leadNo || "",
+      companyName: record.companyName || "",
+      division: record.division || "",
+      poNumber: record.poNumber || record.quotationNo || "",
+      poDate: record.poDate || todayISO(),
+      billingAddress: record.billingAddress || "",
+      shippingAddress: record.shippingAddress || "",
+      state: record.state || "",
+      city: record.city || "",
+      contactName: record.contactName || "",
+      contactNo: record.contactNo || "",
+      gst: record.gst || "",
+      quotationDate: todayISO(),
+      freightType: record.freightType || "",
+      advancePayment: record.advancePayment || "No",
+      advanceAmount: record.advanceAmount || "",
+    })
+
+    setItems(
+      Array.isArray(record.items) && record.items.length > 0
+        ? record.items.map((it, index) => ({ ...it, id: index + 1 }))
+        : [makeEmptyItem(1)]
+    )
+
+    setTerms(
+      Array.isArray(record.terms) && record.terms.length > 0
+        ? record.terms.map((t, index) => ({
+          id: t.id || `revised-term-${index}`,
+          description: typeof t === "string" ? t : t.description || "",
+        }))
+        : loadTermsFromMaster()
+    )
   }
 
   const handleFieldChange = (field, value) => {
@@ -363,14 +486,25 @@ function Quotation() {
     setTerms((prev) => prev.map((t) => (t.id === id ? { ...t, description: value } : t)))
   }
 
+  // Lets the user add extra Terms & Conditions on this quotation alone
+  // (on top of whatever's pulled from Master) — applies to both Create
+  // Quotation and Revise, since they share this same form.
+  const addTerm = () => {
+    setTerms((prev) => [...prev, { id: `custom-term-${Date.now()}-${prev.length}`, description: "" }])
+  }
+
+  const removeTerm = (id) => {
+    setTerms((prev) => prev.filter((t) => t.id !== id))
+  }
+
   // ---- Items & Quantities ----
   const handleItemChange = (id, field, value) => {
     setItems((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item
         const updated = { ...item, [field]: value }
-        if (field === "qty" || field === "rate" || field === "gst") {
-          updated.total = computeItemTotal(updated.qty, updated.rate, updated.gst)
+        if (field === "qty" || field === "rate" || field === "gst" || field === "discountPercent") {
+          updated.total = computeItemTotal(updated.qty, updated.rate, updated.gst, updated.discountPercent)
         }
         return updated
       })
@@ -385,19 +519,32 @@ function Quotation() {
     setItems((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== id) : prev))
   }
 
-  const grandTotal = useMemo(
-    () => items.reduce((sum, item) => sum + Number(item.total || 0), 0),
+  const summary = useMemo(
+    () => computeSummary(items),
     [items]
   )
+  const grandTotal = summary.grandTotal
+
+  // Preview of the number a revision will actually be saved under, e.g.
+  // "NTC/PO/25-26/001-R2" — recomputed live against the current History so
+  // it's always the next number after whatever's already been saved.
+  const revisionPreview = useMemo(() => {
+    if (activeTab !== "revise" || !formData.poNumber) return null
+    return `${getBaseQuotationNumber(formData.poNumber)}-R${getNextRevisionNumber(formData.poNumber, historyList)}`
+  }, [activeTab, formData.poNumber, historyList])
 
   const handleReset = () => {
     setFormData(makeInitialFormData())
     setItems([makeEmptyItem(1)])
     setTerms(loadTermsFromMaster())
-    loadNextPoNumber()
+    setSelectedRevisionSource("")
+    if (activeTab !== "revise") {
+      loadNextPoNumber()
+    }
   }
 
   const validate = () => {
+    if (!formData.poNumber) return "The Quotation Number is still generating — please wait a moment and try again."
     if (!formData.leadNo) return "Please select a Lead No."
     if (!formData.companyName) return "Company Name is missing for the selected lead."
     const validItems = items.filter((i) => i.item.trim() && Number(i.qty) > 0)
@@ -428,16 +575,10 @@ function Quotation() {
 
   const handleGeneratePdf = (record) => {
     try {
-      if (record.pdfDataUri) {
-        const link = document.createElement("a")
-        link.href = record.pdfDataUri
-        link.download = `Quotation_${(record.poNumber || record.quotationNo || "quotation").replace(/\//g, "-")}.pdf`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        return
-      }
-      const doc = buildQuotationPdf(record)
+      // Always rebuild from the record's own data with the current template
+      // — a stored pdfDataUri snapshot (from whenever it was first saved)
+      // could be stale against later template changes, e.g. removed fields.
+      const doc = buildQuotationPdf(record, logoDataUri)
       doc.save(`Quotation_${(record.poNumber || record.quotationNo || "quotation").replace(/\//g, "-")}.pdf`)
     } catch (error) {
       console.error("Error generating PDF:", error)
@@ -455,7 +596,7 @@ function Quotation() {
     setIsSubmitting(true)
     try {
       const payload = buildPayload()
-      const doc = buildQuotationPdf(payload)
+      const doc = buildQuotationPdf(payload, logoDataUri)
       const pdfDataUri = doc.output("datauristring")
 
       // The mock upload endpoint always returns a placeholder URL — the real
@@ -484,6 +625,66 @@ function Quotation() {
     }
   }
 
+  // Revise tab's save: same validation/PDF/upload flow as Send PO, but
+  // stores under the next revision number for this quotation's lineage
+  // (e.g. "...-001" -> "...-001-R1" -> "...-001-R2") as a brand-new History
+  // record, so every past revision stays intact and viewable.
+  const handleSaveRevision = async () => {
+    if (!selectedRevisionSource) {
+      showNotification("Please select a quotation to revise.", "error")
+      return
+    }
+
+    const validationError = validate()
+    if (validationError) {
+      showNotification(validationError, "error")
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      const revisedPoNumber = `${getBaseQuotationNumber(formData.poNumber)}-R${getNextRevisionNumber(formData.poNumber, historyList)}`
+      const payload = { ...buildPayload(), poNumber: revisedPoNumber, quotationNo: revisedPoNumber }
+      const doc = buildQuotationPdf(payload, logoDataUri)
+      const pdfDataUri = doc.output("datauristring")
+
+      await mockApi.uploadFile(
+        { name: `Quotation_${revisedPoNumber}.pdf`, type: "application/pdf" },
+        "pdf"
+      )
+
+      const result = await mockApi.saveQuotation({ ...payload, pdfDataUri })
+
+      if (!result.success) {
+        throw new Error(result.error || "Unknown error while saving")
+      }
+
+      showNotification(`Revision ${revisedPoNumber} saved successfully`, "success")
+      handleReset()
+      await loadHistory()
+      setActiveTab("history")
+    } catch (error) {
+      console.error("Error saving revision:", error)
+      showNotification("Error saving revision: " + error.message, "error")
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Switching between Create/Revise/History always starts from a clean
+  // form — Create additionally fetches a fresh auto-generated PO number.
+  const switchTab = (tab) => {
+    if (tab === activeTab) return
+    setActiveTab(tab)
+    setSelectedRevisionSource("")
+    setFormData(makeInitialFormData())
+    setItems([makeEmptyItem(1)])
+    setTerms(loadTermsFromMaster())
+    if (tab === "create") {
+      loadNextPoNumber()
+    }
+  }
+
   const filteredHistory = historyList.filter((record) => {
     if (!historySearch) return true
     const q = historySearch.toLowerCase()
@@ -499,7 +700,7 @@ function Quotation() {
   const paginatedHistory = filteredHistory.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
 
   const historyHeaders = [
-    "PO Number", "Lead No.", "Company Name", "Division", "PO Date",
+    "Quotation Number", "Lead No.", "Company Name", "Division",
     "Quotation Date", "Advance Payment", "Grand Total", "Actions"
   ]
 
@@ -511,13 +712,12 @@ function Quotation() {
         <div className="max-w-[140px] truncate" title={record.companyName}>{record.companyName || "-"}</div>
       </td>
       <td className="px-3 sm:px-4 py-3 text-sm text-gray-500">{record.division || "-"}</td>
-      <td className="px-3 sm:px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatDisplayDate(record.poDate)}</td>
       <td className="px-3 sm:px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{formatDisplayDate(record.quotationDate)}</td>
       <td className="px-3 sm:px-4 py-3 text-sm text-gray-500 whitespace-nowrap">
         {record.advancePayment === "Yes" ? `Yes (${record.advanceAmount || 0})` : "No"}
       </td>
       <td className="px-3 sm:px-4 py-3 text-sm font-medium text-gray-900 text-right whitespace-nowrap">
-        {Number(record.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+        {computeSummary(record.items).grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
       </td>
       <td className="px-3 sm:px-4 py-3">
         <button
@@ -541,11 +741,10 @@ function Quotation() {
           <p className="text-xs text-gray-500">Lead {record.leadNo || "-"} • {record.division || "-"}</p>
         </div>
         <span className="text-sm font-semibold text-gray-900">
-          {Number(record.grandTotal || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+          {computeSummary(record.items).grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
         </span>
       </div>
       <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
-        <div><span className="block text-xs text-gray-400">PO Date</span>{formatDisplayDate(record.poDate)}</div>
         <div><span className="block text-xs text-gray-400">Quotation Date</span>{formatDisplayDate(record.quotationDate)}</div>
         <div className="col-span-2">
           <span className="block text-xs text-gray-400">Advance Payment</span>
@@ -566,7 +765,7 @@ function Quotation() {
       {/* Tabs */}
       <div className="flex border-b border-gray-200 shrink-0">
         <button
-          onClick={() => setActiveTab("create")}
+          onClick={() => switchTab("create")}
           className={`flex-1 sm:flex-none px-6 py-3 text-sm font-semibold transition-colors border-b-2 ${activeTab === "create"
             ? "text-indigo-600 border-indigo-600 bg-indigo-50/60"
             : "text-gray-500 border-transparent hover:text-gray-700"
@@ -575,7 +774,16 @@ function Quotation() {
           Create Quotation
         </button>
         <button
-          onClick={() => setActiveTab("history")}
+          onClick={() => switchTab("revise")}
+          className={`flex-1 sm:flex-none px-6 py-3 text-sm font-semibold transition-colors border-b-2 ${activeTab === "revise"
+            ? "text-indigo-600 border-indigo-600 bg-indigo-50/60"
+            : "text-gray-500 border-transparent hover:text-gray-700"
+            }`}
+        >
+          Revise
+        </button>
+        <button
+          onClick={() => switchTab("history")}
           className={`flex-1 sm:flex-none px-6 py-3 text-sm font-semibold transition-colors border-b-2 ${activeTab === "history"
             ? "text-indigo-600 border-indigo-600 bg-indigo-50/60"
             : "text-gray-500 border-transparent hover:text-gray-700"
@@ -596,44 +804,57 @@ function Quotation() {
         </div>
       </div>
 
-      {activeTab === "create" ? (
+      {(activeTab === "create" || activeTab === "revise") ? (
         <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pb-2">
           {/* Firm & Lead */}
           <div className={cardClass}>
             <h3 className="text-base font-semibold text-gray-900 mb-4">Firm & Lead Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className={labelClass}>Firm Name</label>
-                <input type="text" value={FIRM_NAME} readOnly className={readOnlyInputClass} />
-              </div>
-              <div>
-                <label className={labelClass}>Lead No. <span className="text-red-500">*</span></label>
-                <select value={formData.leadNo} onChange={handleLeadChange} className={inputClass}>
-                  <option value="">
-                    {isLoadingLeads ? "Loading leads..." : "Select Lead No."}
-                  </option>
-                  {callTrackerLeads.map((lead) => (
-                    <option key={lead.leadNo} value={lead.leadNo}>
-                      {lead.leadNo} — {lead.companyName || "Unnamed"}
+              {activeTab === "revise" ? (
+                <div>
+                  <label className={labelClass}>Select Quotation to Revise <span className="text-red-500">*</span></label>
+                  <select value={selectedRevisionSource} onChange={(e) => handleReviseSelect(e.target.value)} className={inputClass}>
+                    <option value="">
+                      {isLoadingHistory ? "Loading quotations..." : "Select quotation..."}
                     </option>
-                  ))}
-                </select>
-                {!isLoadingLeads && callTrackerLeads.length === 0 && (
-                  <p className="text-xs text-amber-600 mt-1">
-                    No leads yet — mark a Call Tracker follow-up as "Order Receive" first.
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className={labelClass}>Company Name</label>
-                <input
-                  type="text"
-                  value={formData.companyName}
-                  onChange={(e) => handleFieldChange("companyName", e.target.value)}
-                  className={inputClass}
-                  placeholder="Auto-fills from Lead No."
-                />
-              </div>
+                    {historyList.map((record) => {
+                      const no = record.poNumber || record.quotationNo
+                      return (
+                        <option key={no} value={no}>
+                          {no} — {record.companyName || "Unnamed"} (Lead {record.leadNo || "-"})
+                        </option>
+                      )
+                    })}
+                  </select>
+                  {!isLoadingHistory && historyList.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      No saved quotations yet — create one first.
+                    </p>
+                  )}
+                  {revisionPreview && (
+                    <p className="text-xs text-sky-600 mt-1">Will save as: {revisionPreview}</p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className={labelClass}>Lead No. <span className="text-red-500">*</span></label>
+                  <select value={formData.leadNo} onChange={handleLeadChange} className={inputClass}>
+                    <option value="">
+                      {isLoadingLeads ? "Loading leads..." : "Select Lead No."}
+                    </option>
+                    {callTrackerLeads.map((lead) => (
+                      <option key={lead.leadNo} value={lead.leadNo}>
+                        {lead.leadNo} — {lead.companyName || "Unnamed"}
+                      </option>
+                    ))}
+                  </select>
+                  {!isLoadingLeads && callTrackerLeads.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      No leads yet — mark a Call Tracker follow-up as "Order Receive" first.
+                    </p>
+                  )}
+                </div>
+              )}
               <div>
                 <label className={labelClass}>Division</label>
                 <input
@@ -660,26 +881,6 @@ function Quotation() {
                   type="text"
                   value={formData.city}
                   onChange={(e) => handleFieldChange("city", e.target.value)}
-                  className={inputClass}
-                  placeholder="Auto-fills from Lead No."
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Contact Name</label>
-                <input
-                  type="text"
-                  value={formData.contactName}
-                  onChange={(e) => handleFieldChange("contactName", e.target.value)}
-                  className={inputClass}
-                  placeholder="Auto-fills from Lead No."
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Contact No.</label>
-                <input
-                  type="text"
-                  value={formData.contactNo}
-                  onChange={(e) => handleFieldChange("contactNo", e.target.value)}
                   className={inputClass}
                   placeholder="Auto-fills from Lead No."
                 />
@@ -735,16 +936,12 @@ function Quotation() {
             <h3 className="text-base font-semibold text-gray-900 mb-4">PO & Quotation Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className={labelClass}>PO Number</label>
-                <input type="text" value={formData.poNumber || "Generating..."} readOnly className={readOnlyInputClass} />
-              </div>
-              <div>
-                <label className={labelClass}>PO Date</label>
+                <label className={labelClass}>{activeTab === "revise" ? "Revised Quotation Number" : "Quotation Number"}</label>
                 <input
-                  type="date"
-                  value={formData.poDate}
-                  onChange={(e) => handleFieldChange("poDate", e.target.value)}
-                  className={inputClass}
+                  type="text"
+                  value={activeTab === "revise" ? (revisionPreview || "Select a quotation to revise") : (formData.poNumber || "Generating...")}
+                  readOnly
+                  className={readOnlyInputClass}
                 />
               </div>
               <div>
@@ -813,7 +1010,7 @@ function Quotation() {
               <table className="w-full text-sm" style={{ minWidth: "900px" }}>
                 <thead className="bg-gray-50">
                   <tr>
-                    {["S/N", "Item", "Qty", "Rate", "HSN", "GST%", "Delivery Date", "Total", ""].map((h) => (
+                    {["S/N", "Item", "Qty", "Rate", "Disc %", "HSN", "GST%", "Total", ""].map((h) => (
                       <th key={h} className="px-2 py-2 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">
                         {h}
                       </th>
@@ -852,6 +1049,17 @@ function Quotation() {
                           className={inputClass}
                         />
                       </td>
+                      <td className="px-2 py-2 w-24">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={item.discountPercent}
+                          onChange={(e) => handleItemChange(item.id, "discountPercent", e.target.value)}
+                          className={inputClass}
+                          placeholder="0"
+                        />
+                      </td>
                       <td className="px-2 py-2 w-28">
                         <input
                           type="text"
@@ -871,14 +1079,6 @@ function Quotation() {
                             <option key={slab} value={slab}>{slab}%</option>
                           ))}
                         </select>
-                      </td>
-                      <td className="px-2 py-2 w-40">
-                        <input
-                          type="date"
-                          value={item.deliveryDate}
-                          onChange={(e) => handleItemChange(item.id, "deliveryDate", e.target.value)}
-                          className={inputClass}
-                        />
                       </td>
                       <td className="px-2 py-2 w-28 text-right font-medium text-gray-900 whitespace-nowrap">
                         {Number(item.total || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -904,30 +1104,69 @@ function Quotation() {
             </div>
 
             <div className="flex justify-end mt-4 pt-4 border-t border-gray-100">
-              <div className="text-right">
-                <span className="text-sm text-gray-500 mr-3">Grand Total:</span>
-                <span className="text-lg font-bold text-gray-900">
-                  {grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-                </span>
+              <div className="w-full max-w-xs space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Base Price</span>
+                  <span className="text-gray-900">
+                    {summary.basePrice.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Discount</span>
+                  <span className="text-gray-900">
+                    {summary.discountAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">GST</span>
+                  <span className="text-gray-900">
+                    {summary.gstAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                  <span className="text-sm text-gray-500">Grand Total</span>
+                  <span className="text-lg font-bold text-gray-900">
+                    {summary.grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Terms & Conditions */}
           <div className={cardClass}>
-            <h3 className="text-base font-semibold text-gray-900 mb-4">Terms & Conditions</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-gray-900">Terms & Conditions</h3>
+              <button
+                type="button"
+                onClick={addTerm}
+                className="inline-flex items-center px-3 py-1.5 text-sm border border-sky-300 text-sky-700 rounded-md hover:bg-sky-50"
+              >
+                <PlusIcon className="h-4 w-4 mr-1" /> Add Term
+              </button>
+            </div>
             <div className="space-y-3">
               {terms.length === 0 ? (
-                <p className="text-sm text-gray-400">No terms configured in Master yet.</p>
+                <p className="text-sm text-gray-400">No terms added yet. Click "Add Term" to add one.</p>
               ) : (
                 terms.map((t) => (
-                  <input
-                    key={t.id}
-                    type="text"
-                    value={t.description}
-                    onChange={(e) => handleTermChange(t.id, e.target.value)}
-                    className={inputClass}
-                  />
+                  <div key={t.id} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={t.description}
+                      onChange={(e) => handleTermChange(t.id, e.target.value)}
+                      className={inputClass}
+                      placeholder="Enter term description"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeTerm(t.id)}
+                      className="flex-shrink-0 p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                      title="Remove term"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </div>
                 ))
               )}
             </div>
@@ -948,11 +1187,12 @@ function Quotation() {
               <EyeIcon className="h-4 w-4 mr-2" /> Preview
             </button>
             <button
-              onClick={handleSendPo}
+              onClick={activeTab === "revise" ? handleSaveRevision : handleSendPo}
               disabled={isSubmitting}
               className="inline-flex items-center justify-center px-5 py-2 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-medium rounded-md disabled:opacity-50"
             >
-              <SaveIcon className="h-4 w-4 mr-2" /> {isSubmitting ? "Saving..." : "Send PO"}
+              <SaveIcon className="h-4 w-4 mr-2" />
+              {isSubmitting ? "Saving..." : activeTab === "revise" ? "Save Revision" : "Send PO"}
             </button>
           </div>
         </div>
@@ -1003,14 +1243,22 @@ function Quotation() {
               <button onClick={() => setShowPreview(false)} className="text-gray-500 hover:text-gray-700 p-1">✕</button>
             </div>
             <div className="overflow-y-auto p-6 space-y-5 text-sm">
+              <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden -mt-1">
+                <div className="flex flex-col items-center gap-2 p-4 text-center">
+                  <img src={nutechLogo} alt={FIRM_NAME} className="h-14 w-auto object-contain" />
+                  <p className="text-gray-500">{FIRM_ADDRESS}</p>
+                </div>
+                <div className="border-t border-gray-100 py-3 text-center">
+                  <p className="text-sm font-bold tracking-[0.3em] text-gray-800 uppercase">Quotation</p>
+                </div>
+              </div>
+
               <div className="flex justify-between">
                 <div>
-                  <p className="text-lg font-bold">{FIRM_NAME}</p>
                   <p className="text-gray-500">Lead No.: {formData.leadNo || "-"}</p>
                 </div>
                 <div className="text-right">
-                  <p><span className="text-gray-500">PO Number:</span> <span className="font-medium">{formData.poNumber}</span></p>
-                  <p><span className="text-gray-500">PO Date:</span> {formatDisplayDate(formData.poDate)}</p>
+                  <p><span className="text-gray-500">Quotation Number:</span> <span className="font-medium">{formData.poNumber}</span></p>
                   <p><span className="text-gray-500">Quotation Date:</span> {formatDisplayDate(formData.quotationDate)}</p>
                 </div>
               </div>
@@ -1038,7 +1286,7 @@ function Quotation() {
                   <table className="w-full text-xs border border-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
-                        {["S/N", "Item", "Qty", "Rate", "HSN", "GST%", "Delivery Date", "Total"].map((h) => (
+                        {["S/N", "Item", "Qty", "Rate", "Disc %", "HSN", "GST%", "Total"].map((h) => (
                           <th key={h} className="px-2 py-1.5 text-left border-b border-gray-200">{h}</th>
                         ))}
                       </tr>
@@ -1050,17 +1298,20 @@ function Quotation() {
                           <td className="px-2 py-1.5">{item.item || "-"}</td>
                           <td className="px-2 py-1.5">{item.qty}</td>
                           <td className="px-2 py-1.5">{Number(item.rate || 0).toFixed(2)}</td>
+                          <td className="px-2 py-1.5">{item.discountPercent || 0}%</td>
                           <td className="px-2 py-1.5">{item.hsn || "-"}</td>
                           <td className="px-2 py-1.5">{item.gst}%</td>
-                          <td className="px-2 py-1.5">{formatDisplayDate(item.deliveryDate)}</td>
                           <td className="px-2 py-1.5 text-right">{Number(item.total || 0).toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <div className="text-right font-bold mt-2">
-                  Grand Total: {grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                <div className="flex flex-col items-end gap-1 mt-2 text-sm">
+                  <p><span className="text-gray-500">Base Price:</span> {summary.basePrice.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                  <p><span className="text-gray-500">Discount:</span> {summary.discountAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                  <p><span className="text-gray-500">GST:</span> {summary.gstAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
+                  <p className="font-bold text-base">Grand Total: {summary.grandTotal.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</p>
                 </div>
               </div>
 

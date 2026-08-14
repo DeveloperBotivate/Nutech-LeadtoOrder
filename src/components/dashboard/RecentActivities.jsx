@@ -2,7 +2,7 @@ import { useState, useEffect, useContext } from "react"
 import { AuthContext } from "../../App"
 import { mockApi } from "../../services/mockApi"
 
-function RecentActivities() {
+function RecentActivities({ filters }) {
   const { currentUser, isAdmin } = useContext(AuthContext)
   const [activities, setActivities] = useState([])
   const [isLoading, setIsLoading] = useState(true)
@@ -11,7 +11,7 @@ function RecentActivities() {
     const fetchActivities = async () => {
       try {
         setIsLoading(true)
-        const data = await mockApi.fetchRecentActivities(currentUser, isAdmin)
+        const data = await mockApi.fetchRecentActivities(currentUser, isAdmin, filters)
         setActivities(data)
       } catch (error) {
         console.error("Error fetching recent activities:", error)
@@ -22,7 +22,7 @@ function RecentActivities() {
     }
 
     fetchActivities()
-  }, [currentUser, isAdmin])
+  }, [currentUser, isAdmin, filters])
 
   if (isLoading) {
     return (
