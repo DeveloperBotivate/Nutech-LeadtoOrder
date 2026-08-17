@@ -1,20 +1,21 @@
 import React, { useState } from 'react';
 import {
   Search, Plus, Filter,
-  Building2, Ruler, Users, Share2, Briefcase, CalendarClock, Wallet, FileText
+  Building2, Ruler, Users, Share2, Briefcase, Layers, CalendarClock, Wallet, FileText
 } from 'lucide-react';
 import Company from './Company';
 import UOM from './UOM';
 import LeadReceiverName from './LeadReceiverName';
 import LeadSource from './LeadSource';
 import NOB from './NOB';
+import Division from './Division';
 import CreditDays from './CreditDays';
 import CreditLimit from './CreditLimit';
 import TermsAndConditions from './TermsAndConditions';
 import SearchableDropdown from '../../components/SearchableDropdown';
 import {
   getCompanies, getUOMs, getLeadReceiverNames, getLeadSources,
-  getNOBs, getCreditDays, getCreditLimits, getTermsAndConditions
+  getNOBs, getDivisions, getCreditDays, getCreditLimits, getTermsAndConditions
 } from '../../utils/storageManager';
 
 // Each master type's sidebar entry — icon, label, and a live count pulled
@@ -26,6 +27,7 @@ const MASTER_TYPES = [
   { key: 'Sales Person Name', label: 'Sales Person Name', icon: Users, getCount: () => getLeadReceiverNames().length },
   { key: 'Lead Source', label: 'Lead Source', icon: Share2, getCount: () => getLeadSources().length },
   { key: 'NOB', label: 'NOB', icon: Briefcase, getCount: () => getNOBs().length },
+  { key: 'Division', label: 'Division', icon: Layers, getCount: () => getDivisions().length },
   { key: 'Credit Days', label: 'Credit Days', icon: CalendarClock, getCount: () => getCreditDays().length },
   { key: 'Credit Limit', label: 'Credit Limit', icon: Wallet, getCount: () => getCreditLimits().length },
   { key: 'Terms and Conditions', label: 'Terms & Conditions', icon: FileText, getCount: () => getTermsAndConditions().length },
@@ -42,6 +44,7 @@ export default function Master() {
   const [triggerAddLRN, setTriggerAddLRN] = useState(0);
   const [triggerAddLS, setTriggerAddLS] = useState(0);
   const [triggerAddNOB, setTriggerAddNOB] = useState(0);
+  const [triggerAddDivision, setTriggerAddDivision] = useState(0);
   const [triggerAddCD, setTriggerAddCD] = useState(0);
   const [triggerAddCL, setTriggerAddCL] = useState(0);
   const [triggerAddTNC, setTriggerAddTNC] = useState(0);
@@ -52,6 +55,7 @@ export default function Master() {
     else if (activeTab === 'Sales Person Name') setTriggerAddLRN(prev => prev + 1);
     else if (activeTab === 'Lead Source') setTriggerAddLS(prev => prev + 1);
     else if (activeTab === 'NOB') setTriggerAddNOB(prev => prev + 1);
+    else if (activeTab === 'Division') setTriggerAddDivision(prev => prev + 1);
     else if (activeTab === 'Credit Days') setTriggerAddCD(prev => prev + 1);
     else if (activeTab === 'Credit Limit') setTriggerAddCL(prev => prev + 1);
     else if (activeTab === 'Terms and Conditions') setTriggerAddTNC(prev => prev + 1);
@@ -158,6 +162,7 @@ export default function Master() {
             {activeTab === 'Sales Person Name' && <LeadReceiverName searchQuery={searchQuery} triggerAdd={triggerAddLRN} />}
             {activeTab === 'Lead Source' && <LeadSource searchQuery={searchQuery} triggerAdd={triggerAddLS} />}
             {activeTab === 'NOB' && <NOB searchQuery={searchQuery} triggerAdd={triggerAddNOB} />}
+            {activeTab === 'Division' && <Division searchQuery={searchQuery} triggerAdd={triggerAddDivision} />}
             {activeTab === 'Credit Days' && <CreditDays searchQuery={searchQuery} triggerAdd={triggerAddCD} />}
             {activeTab === 'Credit Limit' && <CreditLimit searchQuery={searchQuery} triggerAdd={triggerAddCL} />}
             {activeTab === 'Terms and Conditions' && <TermsAndConditions searchQuery={searchQuery} triggerAdd={triggerAddTNC} />}

@@ -7,6 +7,7 @@ import {
   getLeadReceiverNames, saveLeadReceiverNames,
   getLeadSources, saveLeadSources,
   getNOBs, saveNOBs,
+  getDivisions,
   getCompanies, saveCompany
 } from "../utils/storageManager"
 import { fileToBase64, generateId } from "../utils/helpers"
@@ -40,6 +41,7 @@ function Leads() {
   const { showNotification } = useContext(AuthContext)
   const [designationOptions, setDesignationOptions] = useState([])
   const [nobOptions, setNobOptions] = useState([]) // New state for nature of business dropdown
+  const [divisionOptions, setDivisionOptions] = useState([]) // New state for division dropdown
   const [stateOptions, setStateOptions] = useState([])
 
 
@@ -81,12 +83,13 @@ function Leads() {
       console.error("Error fetching dropdown values:", error)
     }
 
-    // Lead Receiver Name, Lead Source & NOB are managed from the Master
-    // module, so pull their live values from there.
+    // Lead Receiver Name, Lead Source, NOB & Division are managed from the
+    // Master module, so pull their live values from there.
     try {
       setReceiverNames(getLeadReceiverNames().map(item => item.name))
       setLeadSources(getLeadSources().map(item => item.name))
       setNobOptions(getNOBs().map(item => item.name))
+      setDivisionOptions(getDivisions().map(item => item.name))
     } catch (error) {
       console.error("Error loading master dropdown data:", error)
     }
@@ -410,7 +413,6 @@ function Leads() {
                   <option value="">Select sales type</option>
                   <option value="New Customer">New Customer</option>
                   <option value="Existing Customer">Existing Customer</option>
-                  <option value="Existing Customer - visited before but no Order Yet">Existing Customer - visited before but no Order Yet</option>
                 </select>
               </div>
 
@@ -507,13 +509,17 @@ function Leads() {
                 <label htmlFor="division" className="block text-sm font-medium text-gray-700">
                   Division
                 </label>
-                <input
+                <select
                   id="division"
                   value={formData.division}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Division will auto-fill"
-                />
+                >
+                  <option value="">Select division</option>
+                  {divisionOptions.map((option, index) => (
+                    <option key={index} value={option}>{option}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="space-y-2">

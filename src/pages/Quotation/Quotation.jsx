@@ -573,6 +573,19 @@ function Quotation() {
     date: formData.quotationDate,
   })
 
+  // Lets the user grab a PDF of what's currently in the form — same as
+  // Preview, this is just a look at the draft and doesn't save or send
+  // anything, so it intentionally skips the Send PO validation.
+  const handleDownloadDraftPdf = () => {
+    try {
+      const doc = buildQuotationPdf(buildPayload(), logoDataUri)
+      doc.save(`Quotation_${(formData.poNumber || "draft").replace(/\//g, "-")}.pdf`)
+    } catch (error) {
+      console.error("Error downloading PDF:", error)
+      showNotification("Failed to download PDF", "error")
+    }
+  }
+
   const handleGeneratePdf = (record) => {
     try {
       // Always rebuild from the record's own data with the current template
@@ -1179,6 +1192,12 @@ function Quotation() {
               className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
             >
               <RefreshCwIcon className="h-4 w-4 mr-2" /> Reset
+            </button>
+            <button
+              onClick={handleDownloadDraftPdf}
+              className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+            >
+              <DownloadIcon className="h-4 w-4 mr-2" /> Download
             </button>
             <button
               onClick={() => setShowPreview(true)}

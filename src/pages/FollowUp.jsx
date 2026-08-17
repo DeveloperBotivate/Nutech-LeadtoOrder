@@ -346,10 +346,14 @@ function FollowUp() {
     }
   }
 
-  // Filter function for search in both sections
+  // Filter function for search in both sections. Pending has no search box
+  // (see the input above, only rendered for History), so it always matches
+  // here — otherwise a term typed while on History would keep silently
+  // filtering Pending after switching tabs, with no visible box to explain it.
   const filteredPendingFollowUps = pendingFollowUps.filter((followUp) => {
     const searchLower = searchTerm.toLowerCase()
     const matchesSearch =
+      activeTab !== "history" ||
       searchTerm === "" ||
       (followUp.companyName && followUp.companyName.toLowerCase().includes(searchLower)) ||
       (followUp.leadId && followUp.leadId.toLowerCase().includes(searchLower)) ||
@@ -361,12 +365,17 @@ function FollowUp() {
       (followUp.enquiryStatus && followUp.enquiryStatus.toLowerCase().includes(searchLower)) ||
       (followUp.assignedTo && followUp.assignedTo.toLowerCase().includes(searchLower))
 
-    // Apply filter type for Column R
+    // Apply filter type. Every pending row's enquiryStatus is hardcoded to
+    // "New" (see mockApi.js) regardless of follow-up history, so it can't
+    // tell a fresh lead apart from one already scheduled for a call back —
+    // whether a follow-up has ever been logged is only reflected in
+    // nextAction/nextCallDate (set once an "Expected" outcome is recorded).
+    const hasBeenFollowedUp = !!(followUp.nextAction || followUp.nextCallDate)
     const matchesFilterType = (() => {
       if (filterType === "first") {
-        return followUp.enquiryStatus === "" || followUp.enquiryStatus === null
+        return !hasBeenFollowedUp
       } else if (filterType === "multi") {
-        return followUp.enquiryStatus === "expected"
+        return hasBeenFollowedUp
       } else {
         return true
       }
@@ -378,8 +387,9 @@ function FollowUp() {
     // Apply company filter
     const matchesCompanyFilter = companyFilter === "all" || followUp.companyName === companyFilter
 
-    // Apply person filter
-    const matchesPersonFilter = personFilter === "all" || followUp.personName === personFilter
+    // Apply person filter (matches the "Sales Person Name" column, i.e.
+    // who raised/owns the lead — not the company's contact person)
+    const matchesPersonFilter = personFilter === "all" || followUp.receiverName === personFilter
 
     // Apply NOB filter
     const matchesNobFilter = nobFilter === "all" || followUp.nob === nobFilter
@@ -467,9 +477,10 @@ function FollowUp() {
       }
     })()
 
-    // Apply company / person / NOB filters
+    // Apply company / person / NOB filters (person filter matches the
+    // "Sales Person Name" column — see the pending-list filter above)
     const matchesCompanyFilter = companyFilter === "all" || followUp.companyName === companyFilter
-    const matchesPersonFilter = personFilter === "all" || followUp.personName === personFilter
+    const matchesPersonFilter = personFilter === "all" || followUp.receiverName === personFilter
     const matchesNobFilter = nobFilter === "all" || followUp.nob === nobFilter
 
     return matchesSearch && matchesFilterType && matchesDateFilter && matchesCompanyFilter && matchesPersonFilter && matchesNobFilter
@@ -585,7 +596,7 @@ function FollowUp() {
     { key: "enquiryStatus", label: "Enquiry Status" },
     { key: "receivedDate", label: "Received Date" },
     { key: "state", label: "State" },
-    { key: "projectName", label: "Project Name" },
+    { key: "projectName", label: "NOB" },
     { key: "salesType", label: "Sales Type" },
     { key: "productDate", label: "Product Date" },
     { key: "projectValue", label: "Project Value" },
@@ -726,7 +737,8 @@ function FollowUp() {
         )}
         {pendingVisibleColumns.nextAction && (
           <td className="px-3 sm:px-4 py-3 sm:py-4 text-sm text-gray-500">
-            <div className="max-w-[120px] sm:max-w-[150px] truncate" title={followUp.nextAction}>{followUp.nextAction || "-"}</div>
+            {/* No follow-up recorded against this lead yet — it still needs a First Follow Up, not a "-" */}
+            <div className="max-w-[120px] sm:max-w-[150px] truncate" title={followUp.nextAction || "First Follow Up"}>{followUp.nextAction || "First Follow Up"}</div>
           </td>
         )}
         {pendingVisibleColumns.nextCallDateTime && (
@@ -859,7 +871,7 @@ function FollowUp() {
       </div>
       <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
         <div>
-          <span className="block text-xs text-gray-400">Project</span>
+          <span className="block text-xs text-gray-400">NOB</span>
           <p className="truncate">{followUp.projectName}</p>
         </div>
         <div>
@@ -914,8 +926,10 @@ function FollowUp() {
               </div>
             </div>
 
-            {/* Mobile: Stack filters vertically, Desktop: Horizontal */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-row gap-2 lg:gap-3">
+            {/* Mobile: Stack filters vertically, Desktop: Horizontal — wraps
+                onto a second row instead of squeezing each dropdown below
+                its label's width once space runs out. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-row lg:flex-wrap gap-2 lg:gap-3">
               {/* Company / Person / NOB filters — shown for both Pending and
                   History tabs, with their option lists sourced from
                   whichever tab's data is currently active. */}
@@ -924,7 +938,7 @@ function FollowUp() {
                 return (
                   <>
                     {/* Company Name Filter */}
-                    <div className="min-w-0">
+                    <div className="min-w-0 lg:min-w-[140px]">
                       <select
                         value={companyFilter}
                         onChange={(e) => setCompanyFilter(e.target.value)}
@@ -939,15 +953,15 @@ function FollowUp() {
                       </select>
                     </div>
 
-                    {/* Person Name Filter */}
-                    <div className="min-w-0">
+                    {/* Sales Person Name Filter */}
+                    <div className="min-w-0 lg:min-w-[130px]">
                       <select
                         value={personFilter}
                         onChange={(e) => setPersonFilter(e.target.value)}
                         className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
                       >
                         <option value="all">All Persons</option>
-                        {Array.from(new Set(filterSource.map((item) => item.personName)))
+                        {Array.from(new Set(filterSource.map((item) => item.receiverName)))
                           .filter(Boolean)
                           .map((person) => (
                             <option key={person} value={person}>{person}</option>
@@ -956,7 +970,7 @@ function FollowUp() {
                     </div>
 
                     {/* NOB Filter */}
-                    <div className="min-w-0">
+                    <div className="min-w-0 lg:min-w-[110px]">
                       <select
                         value={nobFilter}
                         onChange={(e) => setNobFilter(e.target.value)}
@@ -975,7 +989,7 @@ function FollowUp() {
               })()}
 
               {/* Date Filter */}
-              <div className="min-w-0">
+              <div className="min-w-0 lg:min-w-[130px]">
                 <select
                   value={dateFilter}
                   onChange={(e) => setDateFilter(e.target.value)}
@@ -1006,12 +1020,12 @@ function FollowUp() {
                 const activeSelectAll = isPendingTab ? handlePendingSelectAll : handleSelectAll
 
                 return (
-                  <div className="min-w-0 relative">
+                  <div className="min-w-0 lg:min-w-[150px] relative">
                     <button
                       onClick={() => setShowColumnDropdown(!showColumnDropdown)}
-                      className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white flex items-center justify-between"
+                      className="w-full px-2 sm:px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white flex items-center justify-between gap-2"
                     >
-                      <span>Select Columns</span>
+                      <span className="whitespace-nowrap">Select Columns</span>
                       <svg
                         className={`w-4 h-4 transition-transform ${showColumnDropdown ? "rotate-180" : ""}`}
                         fill="none"
@@ -1067,7 +1081,7 @@ function FollowUp() {
               })()}
 
               {/* Filter Dropdown */}
-              <div className="min-w-0">
+              <div className="min-w-0 lg:min-w-[130px]">
                 <select
                   value={filterType}
                   onChange={(e) => setFilterType(e.target.value)}
@@ -1080,17 +1094,20 @@ function FollowUp() {
               </div>
             </div>
 
-            {/* Search Input - Full width on mobile */}
-            <div className="relative w-full lg:w-auto lg:min-w-[250px]">
-              <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
-              <input
-                type="search"
-                placeholder="Search Call Tracker..."
-                className="pl-8 w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
+            {/* Search Input - Full width on mobile. Pending intentionally
+                has no search box; only shown for the History tab. */}
+            {activeTab === "history" && (
+              <div className="relative w-full lg:w-auto lg:min-w-[250px]">
+                <SearchIcon className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-500" />
+                <input
+                  type="search"
+                  placeholder="Search Call Tracker..."
+                  className="pl-8 w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 bg-white"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -1150,10 +1167,10 @@ function FollowUp() {
           <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${fadeIn}`}>
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowPopup(false)}></div>
             <div
-              className={`relative bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden ${slideIn}`}
+              className={`relative bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden ${slideIn}`}
             >
-              {/* Modal Header - Sticky */}
-              <div className="sticky top-0 bg-white border-b p-4 sm:p-6 flex justify-between items-center z-10">
+              {/* Modal Header */}
+              <div className="bg-white border-b p-4 sm:p-6 flex justify-between items-center flex-shrink-0">
                 <h3 className="text-lg sm:text-xl font-bold text-gray-900 truncate pr-4">
                   Lead Details: {selectedFollowUp?.leadId}
                 </h3>
@@ -1174,7 +1191,7 @@ function FollowUp() {
               </div>
 
               {/* Modal Content - Scrollable */}
-              <div className="overflow-y-auto max-h-[calc(90vh-140px)]">
+              <div className="overflow-y-auto flex-1 min-h-0">
                 <div className="p-4 sm:p-6 space-y-6">
                   {/* Lead Info */}
                   <div className="space-y-3">
@@ -1372,7 +1389,7 @@ function FollowUp() {
                                   )}
                                   {historyItem.projectName && (
                                     <div className="text-sm text-gray-700">
-                                      <span className="font-semibold text-gray-900">Project: </span>
+                                      <span className="font-semibold text-gray-900">NOB: </span>
                                       {historyItem.projectName}
                                     </div>
                                   )}
@@ -1388,8 +1405,8 @@ function FollowUp() {
                 </div>
               </div>
 
-              {/* Modal Footer - Sticky */}
-              <div className="sticky bottom-0 border-t bg-white p-4 sm:p-6 flex flex-col sm:flex-row justify-end space-y-3 sm:space-y-0 sm:space-x-3">
+              {/* Modal Footer */}
+              <div className="border-t bg-white p-4 sm:p-6 flex flex-col sm:flex-row justify-end space-y-3 sm:space-y-0 sm:space-x-3 flex-shrink-0">
                 <button
                   onClick={() => setShowPopup(false)}
                   className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 transition-colors"

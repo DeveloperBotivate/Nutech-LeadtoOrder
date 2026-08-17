@@ -244,10 +244,13 @@ export const mockApi = {
     // existing company's own master data (skipping the New Lead form) and
     // hands back its auto-generated Lead No. so the caller can jump
     // straight into the Lead Follow-Up ("Call Now") form for it.
-    createEnquiryLead: async (company, receiverName) => {
+    // leadNumber is optional — pass the value already previewed via
+    // generateLeadNumber() so what's shown on screen before Submit matches
+    // what actually gets saved; omit it to have one computed fresh here.
+    createEnquiryLead: async (company, receiverName, leadNumber) => {
         await simulateDelay();
 
-        const leadNumber = getNextLeadNumber();
+        leadNumber = leadNumber || getNextLeadNumber();
         const now = new Date();
 
         const newLead = {

@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams, useLocation } from "react-router-dom"
 import { AuthContext } from "../App"
 import { mockApi } from "../services/mockApi"
 import { getUOMs, getCreditDays, getCreditLimits } from "../utils/storageManager"
+import { fileToBase64 } from "../utils/helpers"
 
 function NewFollowUp() {
   const navigate = useNavigate()
@@ -33,6 +34,7 @@ function NewFollowUp() {
     creditAccess: "",
     creditDays: "",
     creditLimit: "",
+    attachment: "", // New attachment uploaded for this follow-up call
   })
 
   // Pre-filled from the lead's original details once fetched
@@ -40,7 +42,6 @@ function NewFollowUp() {
   const [nob, setNob] = useState("")
   const [city, setCity] = useState("")
   const [division, setDivision] = useState("")
-  const [leadAttachment, setLeadAttachment] = useState("")
 
   // New state for dropdown options
   const [productCategories, setProductCategories] = useState([]) // New state for product categories
@@ -92,8 +93,21 @@ function NewFollowUp() {
       if (companyContext.division) setDivision(companyContext.division)
       setFormData((prevData) => ({
         ...prevData,
-        leadNo: "Auto-generated on Save",
+        leadNo: "Generating...",
       }))
+
+      // Preview the Lead No. this enquiry will get so it shows here right
+      // away — this only reads the next available number, it doesn't save
+      // anything, so the lead itself isn't actually created (and doesn't
+      // occupy that number) until the follow-up below is submitted.
+      mockApi.generateLeadNumber().then((previewLeadNumber) => {
+        setFormData((prevData) => ({
+          ...prevData,
+          leadNo: previewLeadNumber,
+        }))
+      }).catch((error) => {
+        console.error("Error previewing lead number:", error)
+      })
     } else if (leadNo) {
       // Prepopulate lead number if available
       setFormData((prevData) => ({
@@ -108,7 +122,6 @@ function NewFollowUp() {
           if (result.lead.nob) setNob(result.lead.nob)
           if (result.lead.city) setCity(result.lead.city)
           if (result.lead.division) setDivision(result.lead.division)
-          if (result.lead.attachment) setLeadAttachment(result.lead.attachment)
         }
       }).catch((error) => {
         console.error("Error fetching lead details for pre-fill:", error)
@@ -122,6 +135,24 @@ function NewFollowUp() {
       ...prevData,
       [id]: value,
     }))
+  }
+
+  // Reads the selected file and stores it as a base64 data URL on formData
+  const handleAttachmentChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (file.size > 2 * 1024 * 1024) {
+      showNotification("Please upload a file smaller than 2MB.", "error")
+      return
+    }
+
+    try {
+      const base64 = await fileToBase64(file)
+      setFormData((prevData) => ({ ...prevData, attachment: base64 }))
+    } catch (error) {
+      showNotification("Could not read the selected file. Please try again.", "error")
+    }
   }
 
   // The combined "Next Call Date & Time" input splits back into the
@@ -145,17 +176,30 @@ function NewFollowUp() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+
+    // Its Lead No. is only a preview until now (see the companyContext
+    // effect above) — if that preview call is still in flight, make the
+    // user wait for it instead of submitting against a placeholder.
+    if (companyContext && formData.leadNo === "Generating...") {
+      showNotification("Still generating the lead number, please wait a moment.", "error")
+      return
+    }
+
     setIsSubmitting(true)
 
     try {
       let finalLeadNo = formData.leadNo;
 
-      if (companyContext && finalLeadNo === "Auto-generated on Save") {
-        const leadResult = await mockApi.createEnquiryLead(companyContext, currentUser?.username);
+      if (companyContext) {
+        // The enquiry lead itself is only created now, on Submit — not when
+        // the form opened — using the same number already previewed above,
+        // so the lead doesn't get raised (and its number doesn't get
+        // consumed) if the user navigates away without submitting.
+        const leadResult = await mockApi.createEnquiryLead(companyContext, currentUser?.username, finalLeadNo);
         if (leadResult.success) {
-           finalLeadNo = leadResult.leadNumber;
+          finalLeadNo = leadResult.leadNumber;
         } else {
-           throw new Error("Failed to create enquiry lead.");
+          throw new Error("Failed to create enquiry lead.");
         }
       }
 
@@ -312,32 +356,47 @@ function NewFollowUp() {
               </label>
               <input
                 id="leadNo"
-                className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 ${formData.leadNo === "Auto-generated on Save" ? "bg-gray-100 text-gray-500" : ""}`}
+                className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-sky-500 ${companyContext ? "bg-gray-100 text-gray-500" : ""}`}
                 placeholder="LD-001"
                 value={formData.leadNo}
                 onChange={handleChange}
                 required
-                readOnly={formData.leadNo === "Auto-generated on Save"}
+                readOnly={!!companyContext}
               />
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">Attachment (from Lead)</label>
-              {leadAttachment ? (
-                <a
-                  href={leadAttachment}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 px-3 py-2 border border-sky-200 text-sky-600 hover:bg-sky-50 rounded-md text-sm font-medium transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                  </svg>
-                  View Attachment
-                </a>
-              ) : (
-                <p className="text-sm text-gray-400">No attachment on file for this lead.</p>
-              )}
+              <label htmlFor="attachment" className="block text-sm font-medium text-gray-700">
+                Attachment
+              </label>
+              <div className="flex items-center gap-2">
+                <label className="flex-1 cursor-pointer">
+                  <div
+                    className={`flex items-center justify-center gap-2 border border-dashed rounded-md px-3 py-2 text-sm transition-colors ${formData.attachment
+                      ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                      : "bg-gray-50 border-gray-300 text-gray-400 hover:border-sky-300 hover:bg-sky-50 hover:text-sky-600"
+                      }`}
+                  >
+                    {formData.attachment ? "File attached" : "Browse file"}
+                  </div>
+                  <input
+                    id="attachment"
+                    type="file"
+                    onChange={handleAttachmentChange}
+                    className="hidden"
+                    accept="image/*,.pdf"
+                  />
+                </label>
+                {formData.attachment && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prevData) => ({ ...prevData, attachment: "" }))}
+                    className="px-3 py-2 text-sm text-red-500 hover:text-red-700 border border-gray-300 rounded-md"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-2">

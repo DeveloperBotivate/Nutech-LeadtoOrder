@@ -67,7 +67,7 @@ export const fmsData = [
         address: "123, Industrial Area, Mumbai",
         gst: "27ABCDE1234F1Z5",
         nob: "Manufacturing",
-        division: "Sales",
+        division: "Nutech Composite",
         creditAccess: "Yes",
         creditDays: "30 Days",
         creditLimit: "1,00,000",

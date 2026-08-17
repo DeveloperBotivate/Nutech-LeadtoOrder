@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Edit, Trash2, Plus, Minus, Paperclip, Check, X, PhoneOutgoing } from 'lucide-react';
-import { getCompanies, saveCompanies, saveCompany, getNOBs } from '../../utils/storageManager';
+import { getCompanies, saveCompanies, saveCompany, getNOBs, getDivisions } from '../../utils/storageManager';
 import { generateId, fileToBase64 } from '../../utils/helpers';
 import { mockApi } from '../../services/mockApi';
 import { AuthContext } from '../../App';
@@ -32,6 +32,7 @@ export default function Company({ searchQuery, triggerAdd }) {
   const { currentUser } = useContext(AuthContext);
   const [companies, setCompanies] = useState([]);
   const [nobOptions, setNobOptions] = useState([]);
+  const [divisionOptions, setDivisionOptions] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -48,8 +49,9 @@ export default function Company({ searchQuery, triggerAdd }) {
 
   useEffect(() => {
     setCompanies(getCompanies());
-    // NOB options come from the NOB Master page, not free text.
+    // NOB and Division options come from their Master pages, not free text.
     setNobOptions(getNOBs().map(n => n.name).filter(Boolean));
+    setDivisionOptions(getDivisions().map(d => d.name).filter(Boolean));
   }, []);
 
   useEffect(() => {
@@ -347,7 +349,12 @@ export default function Company({ searchQuery, triggerAdd }) {
           </div>
           <div className="space-y-1">
             <label className="block text-[10px] md:text-[12px] font-medium text-gray-700 uppercase tracking-tight">Division</label>
-            <input type="text" value={formData.division} onChange={(e) => setFormData({...formData, division: e.target.value})} className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-[11px] md:text-[13px] h-[30px] md:h-[34px]" />
+            <select value={formData.division} onChange={(e) => setFormData({...formData, division: e.target.value})} className="w-full border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-[11px] md:text-[13px] h-[30px] md:h-[34px]">
+              <option value="">Select Division</option>
+              {divisionOptions.map((division) => (
+                <option key={division} value={division}>{division}</option>
+              ))}
+            </select>
           </div>
         </div>
 

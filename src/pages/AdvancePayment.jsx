@@ -640,8 +640,8 @@ function AdvancePayment() {
       {showPopup && (
         <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${fadeIn}`}>
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={closePopup}></div>
-          <div className={`relative bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden ${slideIn}`}>
-            <div className="border-b p-4 sm:p-6 flex justify-between items-center">
+          <div className={`relative bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden ${slideIn}`}>
+            <div className="border-b p-4 sm:p-6 flex justify-between items-center flex-shrink-0">
               <h3 className="text-lg font-bold text-gray-900 truncate pr-4">
                 Advance Payment: {selectedEntry?.quotationNo}
               </h3>
@@ -652,8 +652,8 @@ function AdvancePayment() {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit}>
-              <div className="overflow-y-auto max-h-[calc(90vh-140px)] p-4 sm:p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+              <div className="overflow-y-auto flex-1 min-h-0 p-4 sm:p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-gray-500">Company Name</p>
@@ -751,7 +751,7 @@ function AdvancePayment() {
                 </div>
               </div>
 
-              <div className="border-t bg-white p-4 sm:p-6 flex flex-col sm:flex-row justify-end space-y-3 sm:space-y-0 sm:space-x-3">
+              <div className="border-t bg-white p-4 sm:p-6 flex flex-col sm:flex-row justify-end space-y-3 sm:space-y-0 sm:space-x-3 flex-shrink-0">
                 <button
                   type="button"
                   onClick={closePopup}

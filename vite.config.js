@@ -9,6 +9,9 @@ export default defineConfig({
     tailwindcss(),
   ],
   base: "./", // Add this if assets are not loading
+  server: {
+    port: 3000,
+  },
   build: {
     outDir: "dist",
   },

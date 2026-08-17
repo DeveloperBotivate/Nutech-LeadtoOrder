@@ -8,6 +8,7 @@ const KEYS = {
   LEAD_RECEIVER_NAMES: "master_lead_receiver_names",
   LEAD_SOURCES: "master_lead_sources",
   NOBS: "master_nobs",
+  DIVISIONS: "master_divisions",
   CREDIT_DAYS: "master_credit_days",
   CREDIT_LIMITS: "master_credit_limits",
   SUBMITTED_LEADS: "submitted_leads",
@@ -51,7 +52,7 @@ const seedCompanies = () => ([
     state: "Maharashtra",
     city: "Mumbai",
     nob: "Manufacturing",
-    division: "Sales",
+    division: "Nutech Composite",
     contactPersons: [{ name: "Shadab", designation: "Manager", number: "9876543210" }],
     proof: ""
   },
@@ -67,7 +68,7 @@ const seedCompanies = () => ([
     state: "Delhi",
     city: "Delhi",
     nob: "Trading",
-    division: "Operations",
+    division: "Nutech Pipes",
     contactPersons: [{ name: "Sajit", designation: "Director", number: "8765432109" }],
     proof: ""
   }
@@ -109,11 +110,29 @@ const seedUsers = () => ([
   { id: "seed-user-3", timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(), userNo: "USR-003", username: "user1", password: "123", userType: "user", division: "Operations" },
 ]);
 
+// One-time fixup for browsers that already seeded the two demo companies
+// before their "division" values were aligned to the Division master
+// (seed-company-1/2 used to carry "Sales"/"Operations"). Only touches those
+// two known seed rows — any real company data is left untouched — and runs
+// at most once per browser via the migration flag.
+const DIVISION_SEED_MIGRATION_KEY = "master_migration_company_divisions_v1";
+
+function migrateSeedCompanyDivisions(companies) {
+  if (localStorage.getItem(DIVISION_SEED_MIGRATION_KEY)) return companies;
+
+  const fixes = { "seed-company-1": "Nutech Composite", "seed-company-2": "Nutech Pipes" };
+  const migrated = companies.map(c => (fixes[c.id] ? { ...c, division: fixes[c.id] } : c));
+
+  writeList(KEYS.COMPANIES, migrated);
+  localStorage.setItem(DIVISION_SEED_MIGRATION_KEY, "1");
+  return migrated;
+}
+
 // ---------------- Companies ----------------
 
 export function getCompanies() {
   const existing = readList(KEYS.COMPANIES);
-  if (existing !== null) return existing;
+  if (existing !== null) return migrateSeedCompanyDivisions(existing);
 
   const seeded = seedCompanies();
   writeList(KEYS.COMPANIES, seeded);
@@ -238,6 +257,9 @@ const leadSourceStore = createNameListStore(
 const nobStore = createNameListStore(
   KEYS.NOBS, "nob", ["Manufacturing", "Trading", "Service", "Retail", "OEM"]
 );
+const divisionStore = createNameListStore(
+  KEYS.DIVISIONS, "div", ["Nutech Composite", "Nutech Pipes", "Protech Max"]
+);
 const creditDaysStore = createNameListStore(
   KEYS.CREDIT_DAYS, "cd", ["15 Days", "30 Days", "45 Days", "60 Days"]
 );
@@ -260,6 +282,11 @@ export const saveLeadSources = leadSourceStore.save;
 export const getNOBs = nobStore.get;
 export const saveNOBs = nobStore.save;
 
+// ---------------- Division ----------------
+
+export const getDivisions = divisionStore.get;
+export const saveDivisions = divisionStore.save;
+
 // ---------------- Credit Days ----------------
 
 export const getCreditDays = creditDaysStore.get;
@@ -275,8 +302,38 @@ export const saveCreditLimits = creditLimitStore.save;
 // Pending list, so this isn't seeded with sample data — it starts empty,
 // and whatever gets filled in on the New Lead form is what shows up there.
 
+// One-time cleanup for a bug where opening the Company Master "Enquiry"
+// form raised (and saved) its lead immediately, before the follow-up was
+// ever filled in or submitted — letting the Lead No. sequence run ahead
+// with orphan entries that have no real follow-up data behind them. A
+// Company Master lead with no matching History entry and never resolved
+// can only be one of these leftovers (the fixed flow only creates the
+// lead when its follow-up is actually submitted), so it's safe to drop.
+const ORPHAN_ENQUIRY_LEADS_MIGRATION_KEY = "master_migration_orphan_enquiry_leads_v1";
+
+function migrateOrphanEnquiryLeads(leads) {
+  if (localStorage.getItem(ORPHAN_ENQUIRY_LEADS_MIGRATION_KEY)) return leads;
+
+  const historyLeadNumbers = new Set(getFollowUpHistory().map(h => h.leadNo));
+  const resolvedLeadNumbers = new Set(getResolvedLeadNumbers());
+
+  const cleaned = leads.filter(lead => {
+    const isOrphanEnquiry = lead.source === "Company Master"
+      && !historyLeadNumbers.has(lead.leadNumber)
+      && !resolvedLeadNumbers.has(lead.leadNumber);
+    return !isOrphanEnquiry;
+  });
+
+  if (cleaned.length !== leads.length) {
+    writeList(KEYS.SUBMITTED_LEADS, cleaned);
+  }
+  localStorage.setItem(ORPHAN_ENQUIRY_LEADS_MIGRATION_KEY, "1");
+  return cleaned;
+}
+
 export function getSubmittedLeads() {
-  return readList(KEYS.SUBMITTED_LEADS) || [];
+  const leads = readList(KEYS.SUBMITTED_LEADS) || [];
+  return migrateOrphanEnquiryLeads(leads);
 }
 
 export function saveSubmittedLeads(leads) {
